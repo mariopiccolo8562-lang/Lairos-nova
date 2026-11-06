@@ -17,8 +17,9 @@ import 'features/search/search_screen.dart';
 import 'features/settings/settings_screen.dart';
 
 final _routerProvider = Provider<GoRouter>((ref) {
+  ref.watch(appGenerationProvider); // «Riavvia l'app» dal fornitore: router nuovo, schermate da capo
   final hasPlaylist = ref.read(playlistsProvider).isNotEmpty;
-  return GoRouter(
+  final router = GoRouter(
     initialLocation: hasPlaylist ? '/' : '/import?first=1',
     routes: [
       ShellRoute(
@@ -48,7 +49,7 @@ final _routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/import',
-        builder: (_, s) => ImportScreen(first: s.uri.queryParameters['first'] == '1'),
+        builder: (_, s) => ImportScreen(first: s.uri.queryParameters['first'] == '1', tab: int.tryParse(s.uri.queryParameters['tab'] ?? '') ?? 0),
       ),
       GoRoute(
         path: '/play/:id',
@@ -62,6 +63,8 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/multiview', builder: (_, __) => const MultiviewScreen()),
     ],
   );
+  ref.onDispose(router.dispose);
+  return router;
 });
 
 class KairosApp extends ConsumerWidget {
@@ -70,6 +73,7 @@ class KairosApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp.router(
+      key: ValueKey(ref.watch(appGenerationProvider)),
       title: 'Kairos Nova',
       debugShowCheckedModeBanner: false,
       theme: KairosTheme.dark(),

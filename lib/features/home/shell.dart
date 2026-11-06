@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/panel/panel_service.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
+import '../../core/update/app_updater.dart';
 import '../settings/update_dialog.dart';
 
 class _Dest {
@@ -42,10 +44,14 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final u = ref.read(appUpdaterProvider);
       u.offer.addListener(_onOffer);
-      u.start();
+      final panel = ref.read(panelProvider);
+      panel.uiCommand.addListener(_onPanelCommand);
+      await u.start();
+      final info = await NovaNative.deviceInfo();
+      await panel.start(version: u.currentVersion, model: (info['model'] ?? '').toString());
     });
   }
 
@@ -53,12 +59,34 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ref.read(appUpdaterProvider).offer.removeListener(_onOffer);
+    ref.read(panelProvider).uiCommand.removeListener(_onPanelCommand);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) ref.read(appUpdaterProvider).onForeground();
+    if (state == AppLifecycleState.resumed) {
+      ref.read(appUpdaterProvider).onForeground();
+      ref.read(panelProvider).onForeground();
+    }
+  }
+
+  /// Comandi del fornitore che toccano l'interfaccia.
+  void _onPanelCommand() {
+    final cmd = ref.read(panelProvider).uiCommand.value;
+    if (cmd == null || !mounted) return;
+    final kind = cmd.kind.split(':').first;
+    switch (kind) {
+      case 'reload':
+        ref.read(appGenerationProvider.notifier).state++;
+      case 'settings':
+        context.go('/settings');
+      case 'exit':
+        exitApp();
+      case 'relink':
+        // scollegata dal fornitore: se non restano liste proprie si torna alla schermata iniziale
+        context.go(ref.read(dbProvider).playlists().isEmpty ? '/import?first=1' : '/');
+    }
   }
 
   void _onOffer() {

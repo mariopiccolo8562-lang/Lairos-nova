@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/models/models.dart';
+import '../../core/panel/panel_service.dart';
 import '../../core/player/stream_engine.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
@@ -80,6 +81,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
     final upd = ref.watch(appUpdaterProvider);
+    final panel = ref.watch(panelProvider);
     final playlists = ref.watch(playlistsProvider);
     final active = ref.watch(activePlaylistIdProvider);
     final db = ref.read(dbProvider);
@@ -251,6 +253,51 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 },
               ),
             ]),
+          ),
+
+          _Section('Fornitore'),
+          Card(
+            child: panel.linked
+                ? Column(children: [
+                    ListTile(
+                      title: Text('Codice ${panel.code}'),
+                      subtitle: Text(panel.state == null
+                          ? (panel.lastError ?? 'Collegamento al pannello…')
+                          : '${panel.state!.statusLabel}${panel.state!.name.isNotEmpty ? ' · ${panel.state!.name}' : ''}${panel.state!.expires.isNotEmpty ? ' · scade il ${panel.state!.expiresLabel}' : ''}'
+                              '${panel.providerPlaylistIds.isEmpty ? '' : ' · ${panel.providerPlaylistIds.length} liste dal fornitore'}'),
+                      trailing: panel.busy
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          : IconButton(tooltip: 'Aggiorna dal fornitore', onPressed: () => panel.refresh(), icon: const Icon(Icons.sync_rounded)),
+                    ),
+                    if (panel.lastError != null && panel.state != null)
+                      Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Text(panel.lastError!, style: const TextStyle(color: KairosColors.amber, fontSize: 12))),
+                    ListTile(
+                      title: const Text('Scollega dal fornitore'),
+                      subtitle: const Text('Le liste del fornitore vengono rimosse; quelle aggiunte da te restano'),
+                      trailing: const Icon(Icons.link_off_rounded),
+                      onTap: () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            backgroundColor: KairosColors.surfaceHi,
+                            title: const Text('Scollegare dal fornitore?'),
+                            content: const Text('Per ricollegarti servirà un nuovo codice da comunicare al fornitore.'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annulla')),
+                              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Scollega')),
+                            ],
+                          ),
+                        );
+                        if (ok == true) await panel.unlink();
+                      },
+                    ),
+                  ])
+                : ListTile(
+                    title: const Text('Collega al tuo fornitore'),
+                    subtitle: const Text('Con un codice: le liste arrivano da sole e restano aggiornate'),
+                    trailing: const Icon(Icons.qr_code_2_rounded),
+                    onTap: () => context.push('/import?tab=3'),
+                  ),
           ),
 
           _Section('Aggiornamenti'),

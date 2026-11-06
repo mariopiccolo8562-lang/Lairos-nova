@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/models/models.dart';
+import '../../core/panel/panel_service.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../core/xtream/xtream_api.dart';
@@ -13,14 +14,16 @@ import '../../core/xtream/xtream_api.dart';
 /// Onboarding + aggiunta liste: URL M3U, file locale, Xtream Codes.
 /// Mostra progresso reale (canali analizzati, MB scaricati, fase).
 class ImportScreen extends ConsumerStatefulWidget {
-  const ImportScreen({super.key, this.first = false});
+  const ImportScreen({super.key, this.first = false, this.tab = 0});
   final bool first;
+  /// Scheda iniziale (3 = Fornitore).
+  final int tab;
   @override
   ConsumerState<ImportScreen> createState() => _ImportScreenState();
 }
 
 class _ImportScreenState extends ConsumerState<ImportScreen> with SingleTickerProviderStateMixin {
-  late final _tabs = TabController(length: 3, vsync: this);
+  late final _tabs = TabController(length: 4, vsync: this, initialIndex: widget.first ? 3 : widget.tab.clamp(0, 3));
   final _name = TextEditingController();
   final _url = TextEditingController();
   final _epg = TextEditingController();
@@ -125,9 +128,12 @@ class _ImportScreenState extends ConsumerState<ImportScreen> with SingleTickerPr
                       indicatorColor: KairosColors.cyan,
                       labelColor: KairosColors.cyan,
                       unselectedLabelColor: KairosColors.textDim,
-                      tabs: const [Tab(text: 'URL M3U'), Tab(text: 'File'), Tab(text: 'Xtream')],
+                      tabs: const [Tab(text: 'URL M3U'), Tab(text: 'File'), Tab(text: 'Xtream'), Tab(text: 'Fornitore')],
                       onTap: (_) => setState(() {}),
                     ),
+                    if (_tabs.index == 3)
+                      Padding(padding: const EdgeInsets.all(18), child: _ProviderLink(first: widget.first))
+                    else
                     Padding(
                       padding: const EdgeInsets.all(18),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -213,6 +219,69 @@ class _Progress extends StatelessWidget {
       const SizedBox(height: 8),
       Text('${fmt.format(p.parsed)} voci · $mb MB',
           style: const TextStyle(color: KairosColors.textDim, fontSize: 12)),
+    ]);
+  }
+}
+
+
+/// Collegamento al fornitore: il codice da comunicare; l'app si attiva da sola appena il fornitore lo abilita
+/// e le sue liste arrivano senza inserire nulla a mano.
+class _ProviderLink extends ConsumerStatefulWidget {
+  const _ProviderLink({required this.first});
+  final bool first;
+  @override
+  ConsumerState<_ProviderLink> createState() => _ProviderLinkState();
+}
+
+class _ProviderLinkState extends ConsumerState<_ProviderLink> {
+  bool _went = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final panel = ref.watch(panelProvider);
+    // attivato e liste arrivate: si entra
+    if (panel.active && panel.providerPlaylistIds.isNotEmpty && !_went) {
+      _went = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) context.go('/'); });
+    }
+    if (!panel.linked) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('Hai un abbonamento con un fornitore Kairos?', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        const SizedBox(height: 8),
+        const Text('Genera il codice, comunicalo al tuo fornitore e aspetta: appena lo attiva, le tue liste arrivano da sole e restano sempre aggiornate.',
+            style: TextStyle(color: KairosColors.textDim)),
+        const SizedBox(height: 18),
+        FilledButton.icon(onPressed: panel.busy ? null : () => panel.link(), icon: const Icon(Icons.qr_code_2_rounded), label: const Text('Genera il codice')),
+        if (panel.lastError != null) ...[const SizedBox(height: 10), Text(panel.lastError!, style: const TextStyle(color: KairosColors.red))],
+      ]);
+    }
+    final st = panel.state;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('Comunica questo codice al tuo fornitore', style: TextStyle(color: KairosColors.textDim)),
+      const SizedBox(height: 10),
+      Center(child: SelectableText(panel.code, style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w900, letterSpacing: 4, color: KairosColors.cyan))),
+      const SizedBox(height: 16),
+      Row(children: [
+        if (st == null || st.pending || panel.busy)
+          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: KairosColors.cyan))
+        else
+          Icon(st.active ? Icons.check_circle_rounded : Icons.error_outline_rounded, color: st.active ? KairosColors.cyan : KairosColors.amber),
+        const SizedBox(width: 12),
+        Expanded(child: Text(st == null
+            ? (panel.lastError ?? 'Collegamento al pannello…')
+            : st.pending
+                ? 'In attesa dell\'attivazione: la schermata si aggiorna da sola'
+                : st.active
+                    ? (panel.providerPlaylistIds.isEmpty ? 'Attivo: scarico le liste…' : 'Attivo${st.expires.isEmpty ? '' : ' · scade il ${st.expiresLabel}'}')
+                    : '${st.statusLabel}${st.maintMsg.isNotEmpty ? ' · ${st.maintMsg}' : ''}')),
+      ]),
+      if (panel.lastError != null && st != null) ...[const SizedBox(height: 8), Text(panel.lastError!, style: const TextStyle(color: KairosColors.amber, fontSize: 12))],
+      const SizedBox(height: 18),
+      Row(children: [
+        TextButton(onPressed: panel.busy ? null : () => panel.refresh(), child: const Text('Riprova adesso')),
+        const Spacer(),
+        TextButton(onPressed: panel.busy ? null : () => panel.unlink(), child: const Text('Annulla collegamento')),
+      ]),
     ]);
   }
 }

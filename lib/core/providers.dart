@@ -134,6 +134,9 @@ final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(SettingsNo
 
 // ------------------------------------------------------------------ Aggiornamenti
 
+/// Cresce quando il fornitore chiede «Riavvia l'app»: router e interfaccia si ricreano da zero.
+final appGenerationProvider = StateProvider<int>((ref) => 0);
+
 /// Schermate di visione aperte (player, multiview): niente download in background né finestre.
 final watchingProvider = StateProvider<int>((ref) => 0);
 

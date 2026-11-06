@@ -33,6 +33,7 @@ dependencies:
 
   # Immagini: cache su disco + limiti memoria per migliaia di loghi
   cached_network_image: ^3.3.1
+  flutter_cache_manager: ^3.3.1
 
   # UI
   flutter_animate: ^4.5.0

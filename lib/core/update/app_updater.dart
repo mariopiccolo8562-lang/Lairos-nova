@@ -90,8 +90,27 @@ class AppUpdater extends ChangeNotifier {
   int _failed = 0;
   int _offeredCode = 0;
   bool _bgLocal = true;
-  Map<String, String> _policy = const {};
+  Map<String, String> _policy = const {}; // politica pubblica (profilo dell'app nel pannello)
+  Map<String, String> _rcPolicy = const {}; // politica del fornitore per questo dispositivo (app collegata): vince
   String _first = '';
+
+  Map<String, String> get _eff => {..._policy, ..._rcPolicy};
+
+  /// Politica arrivata col battito del fornitore (bgupd, force): vince su quella pubblica.
+  void applyRemotePolicy(Map<String, String> p) {
+    if (jsonEncode(p) == jsonEncode(_rcPolicy)) return;
+    _rcPolicy = Map.unmodifiable(p);
+    notifyListeners();
+    _maybeOffer(); // es. aggiornamento appena reso obbligatorio
+  }
+
+  /// Il fornitore ha chiesto l'aggiornamento («Invia aggiornamento» o comando): controllo subito, anche su rete a consumo.
+  Future<String> fromPanel() async {
+    final u = await check(force: true);
+    if (u == null) return 'già aggiornata ($currentVersion)';
+    if (watching()) return 'versione ${u.version}: proposta a fine visione';
+    return ready ? 'versione ${u.version} pronta: proposta al cliente' : 'versione ${u.version} in scaricamento';
+  }
 
   /// Versione installata (dalla parte nativa).
   String currentVersion = '';
@@ -113,8 +132,8 @@ class AppUpdater extends ChangeNotifier {
   final ValueNotifier<UpdateInfo?> offer = ValueNotifier(null);
 
   /// Aggiornamenti in background: imposto dal fornitore se c'è, altrimenti scelta del cliente.
-  bool get bgUpdate => _policy.containsKey('bgupd') ? _policy['bgupd'] == 'on' : _bgLocal;
-  bool get bgImposed => _policy.containsKey('bgupd');
+  bool get bgUpdate => _eff.containsKey('bgupd') ? _eff['bgupd'] == 'on' : _bgLocal;
+  bool get bgImposed => _eff.containsKey('bgupd');
 
   Future<void> setBgUpdate(bool on) async {
     _bgLocal = on;
@@ -123,7 +142,7 @@ class AppUpdater extends ChangeNotifier {
   }
 
   /// Giorni di grazia dell'aggiornamento obbligatorio, null = il cliente può rimandare.
-  int? get forceDays => switch (_policy['force']) { 'now' => 0, '3d' => 3, '7d' => 7, _ => null };
+  int? get forceDays => switch (_eff['force']) { 'now' => 0, '3d' => 3, '7d' => 7, _ => null };
 
   /// L'app va bloccata: termine scaduto e APK già scaricato e verificato (mai per un problema di rete).
   bool get mustUpdate {
@@ -161,7 +180,7 @@ class AppUpdater extends ChangeNotifier {
 
   /// Legge il feed e la politica; se c'è una versione nuova la scarica in background (quando è il caso) e la propone.
   /// [manual]: il cliente ha premuto «Controlla»: si propone subito, anche senza download in background.
-  Future<UpdateInfo?> check({bool manual = false}) async {
+  Future<UpdateInfo?> check({bool manual = false, bool force = false}) async {
     if (_checking || currentCode <= 0) return pending;
     _checking = true;
     try {
@@ -201,7 +220,7 @@ class AppUpdater extends ChangeNotifier {
       final st = await NovaNative.updateStatus(code);
       ready = st['ready'] == true;
       final metered = st['metered'] == true;
-      if (!ready && !manual && bgUpdate && !metered && !watching() && _failed < 3) {
+      if (!ready && !manual && (bgUpdate || force) && (force || !metered) && !watching() && _failed < 3) {
         await NovaNative.updatePrefetch(url, code); // l'esito arriva con l'evento ready | failed
       } else {
         _maybeOffer(manual: manual);
