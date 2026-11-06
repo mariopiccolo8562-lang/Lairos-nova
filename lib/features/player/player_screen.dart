@@ -8,8 +8,6 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:screen_brightness/screen_brightness.dart';
-import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/models/models.dart';
@@ -39,6 +37,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   double _gestureValue = 0;
   _Gesture _gesture = _Gesture.none;
   BoxFit _fit = BoxFit.contain;
+  double _brightness = 1.0; // dimmer software (overlay)
+  double _volume = 1.0;
   final _focus = FocusNode();
 
   @override
@@ -184,23 +184,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _gestureStart = d.globalPosition.dy;
   }
 
-  Future<void> _onVUpdate(DragUpdateDetails d) async {
+  void _onVUpdate(DragUpdateDetails d) {
     if (_gestureStart == null) return;
     final h = MediaQuery.sizeOf(context).height;
     final delta = (_gestureStart! - d.globalPosition.dy) / (h * 0.6);
-    try {
-      if (_gesture == _Gesture.brightness) {
-        final cur = await ScreenBrightness().current;
-        final v = (cur + delta * 0.08).clamp(0.0, 1.0);
-        await ScreenBrightness().setScreenBrightness(v);
-        setState(() => _gestureValue = v);
-      } else {
-        final cur = await VolumeController().getVolume();
-        final v = (cur + delta * 0.08).clamp(0.0, 1.0);
-        VolumeController().setVolume(v);
-        setState(() => _gestureValue = v);
-      }
-    } catch (_) {}
+    if (_gesture == _Gesture.brightness) {
+      _brightness = (_brightness + delta).clamp(0.15, 1.0);
+      setState(() => _gestureValue = _brightness);
+    } else {
+      _volume = (_volume + delta).clamp(0.0, 1.0);
+      _engine.setVolume(_volume * 100);
+      setState(() => _gestureValue = _volume);
+    }
     _gestureStart = d.globalPosition.dy;
   }
 
@@ -247,6 +242,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                 fill: Colors.black,
               ),
             ),
+
+            // Dimmer software (luminosità)
+            if (_brightness < 1)
+              IgnorePointer(child: Container(color: Colors.black.withOpacity(1 - _brightness))),
 
             // Stato connessione
             if (st.state == EngineState.connecting ||
