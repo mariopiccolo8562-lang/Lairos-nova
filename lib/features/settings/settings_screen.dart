@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../core/models/models.dart';
 import '../../core/panel/panel_service.dart';
 import '../../core/player/stream_engine.dart';
+import '../../core/parental.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../core/xtream/xtream_api.dart';
@@ -231,25 +232,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 trailing: s.hiddenGroups.isEmpty ? null : TextButton(
                     onPressed: () => n.update((x) => x.copyWith(hiddenGroups: {})), child: const Text('Mostra tutti')),
               ),
+              SwitchListTile(
+                title: const Text('Controllo genitori'),
+                subtitle: Text(s.parentalOn ? 'Attivo: i gruppi e i canali per adulti chiedono il PIN' : 'Spento'),
+                value: s.parentalOn,
+                activeColor: KairosColors.cyan,
+                onChanged: (v) async {
+                  if (!v) {
+                    final p = await askPinDialog(context, title: 'PIN per disattivare');
+                    if (p == null || !context.mounted) return;
+                    if (!s.checkPin(p)) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN errato'))); return; }
+                    n.update((x) => x.copyWith(parentalOn: false));
+                    ref.read(parentalUnlockedProvider.notifier).state = false;
+                  } else {
+                    n.update((x) => x.copyWith(parentalOn: true));
+                    ref.read(parentalUnlockedProvider.notifier).state = false;
+                    if (s.pinIsDefault && context.mounted) await chooseParentalPin(context, ref);
+                  }
+                },
+              ),
               ListTile(
-                title: const Text('PIN parental control'),
-                subtitle: Text(s.parentalPin == null ? 'Disattivato' : 'Attivo'),
+                title: const Text('PIN del controllo genitori'),
+                subtitle: Text(s.pinIsDefault ? 'Ora è 0000: scegline uno tuo' : 'Cambia il PIN'),
                 trailing: const Icon(Icons.lock_outline_rounded),
                 onTap: () async {
-                  final c = TextEditingController();
-                  final v = await showDialog<String>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      backgroundColor: KairosColors.surfaceHi,
-                      title: const Text('Imposta PIN (4 cifre)'),
-                      content: TextField(controller: c, keyboardType: TextInputType.number, maxLength: 4, obscureText: true),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(context, ''), child: const Text('Disattiva')),
-                        FilledButton(onPressed: () => Navigator.pop(context, c.text), child: const Text('Salva')),
-                      ],
-                    ),
-                  );
-                  if (v != null) n.update((x) => v.length == 4 ? x.copyWith(parentalPin: v) : x.copyWith(clearPin: true));
+                  if (!s.pinIsDefault) {
+                    final p = await askPinDialog(context, title: 'PIN attuale');
+                    if (p == null || !context.mounted) return;
+                    if (!s.checkPin(p)) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN errato'))); return; }
+                  }
+                  if (!context.mounted) return;
+                  await chooseParentalPin(context, ref);
                 },
               ),
             ]),

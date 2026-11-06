@@ -61,6 +61,8 @@ class Settings {
     this.epgUrlOverride,
     this.tvMode = false,
     this.preferredAudioLang = 'ita',
+    this.parentalOn = true,
+    this.pinLater = 0,
   });
 
   final BufferProfile bufferProfile;
@@ -72,6 +74,11 @@ class Settings {
   final String? epgUrlOverride;
   final bool tvMode;
   final String preferredAudioLang;
+  /// Controllo genitori attivo (di serie sì). [parentalPin] vuoto = PIN iniziale 0000; [pinLater] = ultimo rinvio della scelta del PIN.
+  final bool parentalOn;
+  final int pinLater;
+  bool get pinIsDefault => parentalPin == null || parentalPin!.isEmpty;
+  bool checkPin(String p) => p.trim() == (pinIsDefault ? '0000' : parentalPin);
 
   Settings copyWith({
     BufferProfile? bufferProfile,
@@ -84,6 +91,8 @@ class Settings {
     String? epgUrlOverride,
     bool? tvMode,
     String? preferredAudioLang,
+    bool? parentalOn,
+    int? pinLater,
   }) =>
       Settings(
         bufferProfile: bufferProfile ?? this.bufferProfile,
@@ -95,6 +104,8 @@ class Settings {
         epgUrlOverride: epgUrlOverride ?? this.epgUrlOverride,
         tvMode: tvMode ?? this.tvMode,
         preferredAudioLang: preferredAudioLang ?? this.preferredAudioLang,
+        parentalOn: parentalOn ?? this.parentalOn,
+        pinLater: pinLater ?? this.pinLater,
       );
 }
 
@@ -114,6 +125,8 @@ class SettingsNotifier extends Notifier<Settings> {
       epgUrlOverride: p.getString('epg'),
       tvMode: p.getBool('tv') ?? false,
       preferredAudioLang: p.getString('lang') ?? 'ita',
+      parentalOn: p.getBool('parental_on') ?? true,
+      pinLater: p.getInt('pin_later') ?? 0,
     );
   }
 
@@ -155,12 +168,17 @@ class SettingsNotifier extends Notifier<Settings> {
     own.epgUrlOverride == null ? p.remove('epg') : p.setString('epg', own.epgUrlOverride!);
     p.setBool('tv', own.tvMode);
     p.setString('lang', own.preferredAudioLang);
+    p.setBool('parental_on', own.parentalOn);
+    p.setInt('pin_later', own.pinLater);
     state = _imposed(own);
     ref.read(engineProvider).setProfile(state.bufferProfile);
   }
 }
 
 final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(SettingsNotifier.new);
+
+/// Controllo genitori: PIN già inserito in questa apertura (i contenuti protetti restano aperti fino alla chiusura).
+final parentalUnlockedProvider = StateProvider<bool>((ref) => false);
 
 // ------------------------------------------------------------------ Aggiornamenti
 

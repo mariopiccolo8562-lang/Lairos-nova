@@ -332,6 +332,11 @@ class PanelService extends ChangeNotifier {
             // «Chiedi il permesso»: apre la schermata di Android «Installa app sconosciute» (nessuna app può attivarlo da sola)
             final had = await const MethodChannel('kairos/nova').invokeMethod<bool>('openInstallPerm') ?? false;
             await c.cmdAck(id, true, had ? 'permesso già concesso' : 'schermata del permesso aperta sulla TV');
+          case 'pin':
+            _ref.read(settingsProvider.notifier).update((x) => x.copyWith(clearPin: true, pinLater: 0));
+            _ref.read(parentalUnlockedProvider.notifier).state = false;
+            await c.cmdAck(id, true, 'PIN riportato a 0000');
+            if (_ref.read(watchingProvider) == 0) _emit('pin');
           case 'exit':
             await c.cmdAck(id, true, 'chiusa');
             _emit('exit');

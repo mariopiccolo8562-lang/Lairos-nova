@@ -11,6 +11,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/models/models.dart';
+import '../../core/parental.dart';
 import '../../core/player/stream_engine.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
@@ -61,6 +62,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     if (c == null) return;
     final local = ref.read(downloadManagerProvider).localPathFor(id);
     if (local != null) c = c.copyWith(url: local); // riproduzione offline
+    // controllo genitori: canale o gruppo per adulti → prima il PIN (annullando si torna indietro)
+    if (parentalLockedChannel(ref, c)) {
+      final ch = c;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final ok = await parentalGate(context, ref, channel: ch);
+        if (!mounted) return;
+        if (ok) _load(id, resume: resume); else if (context.canPop()) context.pop();
+      });
+      return;
+    }
     setState(() => _channel = c);
     Duration? start;
     if (resume && c.type != ChannelType.live) {

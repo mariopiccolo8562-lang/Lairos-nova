@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/models/models.dart';
+import '../../core/parental.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../shared/widgets/widgets.dart';
@@ -34,6 +35,14 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     if (old.initialGroup != widget.initialGroup) _group = widget.initialGroup;
   }
 
+  /// Gruppo scelto: se è per adulti e il controllo genitori è attivo, prima il PIN.
+  Future<void> _pick(String? g) async {
+    if (g != null && g != '__fav' && parentalLockedGroup(ref, g)) {
+      if (!await parentalGate(context, ref, group: g) || !mounted) return;
+    }
+    setState(() => _group = g);
+  }
+
   @override
   Widget build(BuildContext context) {
     final groups = ref.watch(groupsProvider(widget.type));
@@ -48,7 +57,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     final groupsPanel = _GroupsPanel(
       groups: groups,
       selected: _group,
-      onSelect: (g) => setState(() => _group = g),
+      onSelect: (g) => _pick(g),
     );
 
     final list = _ChannelList(
@@ -89,7 +98,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                       selected: _group,
                       onSelect: (g) {
                         Navigator.pop(context);
-                        setState(() => _group = g);
+                        _pick(g);
                       },
                     ),
                   ),

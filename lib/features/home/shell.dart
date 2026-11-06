@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/panel/panel_service.dart';
+import '../../core/parental.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../core/update/app_updater.dart';
@@ -52,6 +53,9 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
       await u.start();
       final info = await NovaNative.deviceInfo();
       await panel.start(version: u.currentVersion, model: (info['model'] ?? '').toString());
+      // controllo genitori: al primo avvio si chiede di scegliere il PIN (quello iniziale è 0000)
+      await Future<void>.delayed(const Duration(milliseconds: 1800));
+      if (mounted) await maybeAskParentalPin(context, ref);
     });
   }
 
@@ -83,6 +87,9 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
         context.go('/settings');
       case 'exit':
         exitApp();
+      case 'pin':
+        // il fornitore ha riportato il PIN a 0000: si chiede subito di sceglierne uno nuovo
+        maybeAskParentalPin(context, ref, force: true);
       case 'relink':
         // scollegata dal fornitore: se non restano liste proprie si torna alla schermata iniziale
         context.go(ref.read(dbProvider).playlists().isEmpty ? '/import?first=1' : '/');
