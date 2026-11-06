@@ -9,6 +9,7 @@ import '../../core/player/stream_engine.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../core/xtream/xtream_api.dart';
+import 'update_dialog.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -78,6 +79,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
+    final upd = ref.watch(appUpdaterProvider);
     final playlists = ref.watch(playlistsProvider);
     final active = ref.watch(activePlaylistIdProvider);
     final db = ref.read(dbProvider);
@@ -251,11 +253,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ]),
           ),
 
+          _Section('Aggiornamenti'),
+          Card(
+            child: Column(children: [
+              ListTile(
+                title: const Text('Aggiornamenti dell\'app'),
+                subtitle: Text(upd.pending == null
+                    ? (upd.message ?? 'Versione installata ${upd.currentVersion.isEmpty ? '—' : upd.currentVersion} · tocca per controllare')
+                    : upd.ready
+                        ? 'Versione ${upd.pending!.version} scaricata: tocca per installare'
+                        : 'Versione ${upd.pending!.version} disponibile: tocca per aggiornare'),
+                trailing: Icon(upd.pending == null ? Icons.refresh_rounded : Icons.system_update_rounded,
+                    color: upd.pending == null ? null : KairosColors.cyan),
+                onTap: () async {
+                  if (upd.pending != null) {
+                    await showUpdateDialog(context, upd);
+                    return;
+                  }
+                  await upd.check(manual: true); // se c'è una versione nuova la finestra arriva da sola
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Aggiornamenti in background'),
+                subtitle: Text((upd.bgUpdate
+                        ? 'La versione nuova si scarica da sola su Wi-Fi o cavo: a te resta solo «Installa»'
+                        : 'La versione nuova si scarica solo quando accetti') +
+                    (upd.bgImposed ? ' · scelto dal fornitore' : '')),
+                value: upd.bgUpdate,
+                activeColor: KairosColors.cyan,
+                onChanged: upd.bgImposed ? null : (v) => upd.setBgUpdate(v),
+              ),
+            ]),
+          ),
+
           _Section('Info'),
-          const Card(
+          Card(
             child: ListTile(
-              title: Text('Kairos Nova 1.0'),
-              subtitle: Text('Motore libmpv · database SQLite FTS5 · parser streaming in isolate.\n'
+              title: Text('Kairos Nova ${upd.currentVersion.isEmpty ? '' : upd.currentVersion}'),
+              subtitle: const Text('Motore libmpv · database SQLite FTS5 · parser streaming in isolate.\n'
                   'Progettato per liste da 300.000+ canali senza rallentamenti.'),
               isThreeLine: true,
             ),

@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- aggiornamento dell'app: apre l'installer di Android con l'APK scaricato in background -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <!-- Android TV / Fire TV: nessun touchscreen richiesto, leanback opzionale -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
@@ -50,6 +52,17 @@
                 <data android:mimeType="application/vnd.apple.mpegurl"/>
             </intent-filter>
         </activity>
+
+        <!-- l'installer di Android legge l'APK scaricato dalla cache dell'app -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
 
         <meta-data android:name="flutterEmbedding" android:value="2"/>
     </application>

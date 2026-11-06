@@ -44,6 +44,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    final watching = ref.read(watchingProvider.notifier); // niente aggiornamenti in background durante la visione
+    Future.microtask(() => watching.state++);
     _engine = ref.read(engineProvider);
     _video = VideoController(_engine.player,
         configuration: const VideoControllerConfiguration(enableHardwareAcceleration: true));
@@ -119,6 +121,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void dispose() {
     _hideTimer?.cancel();
     _numberTimer?.cancel();
+    final watching = ref.read(watchingProvider.notifier);
+    Future.microtask(() => watching.state--);
     final st = _engine.status.value;
     if (_channel != null && !st.isLive) {
       ref.read(dbProvider).recordPlay(_channel!,

@@ -1,9 +1,12 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
+import '../settings/update_dialog.dart';
 
 class _Dest {
   const _Dest(this.path, this.icon, this.selectedIcon, this.label);
@@ -25,9 +28,45 @@ const _dests = [
 ];
 
 /// Shell adattiva: rail laterale (TV, tablet, landscape) o bottom bar (telefono).
-class AppShell extends StatelessWidget {
+/// Avvia anche il controllo degli aggiornamenti e mostra la proposta «Installa ora» quando è il momento.
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.child});
   final Widget child;
+
+  @override
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final u = ref.read(appUpdaterProvider);
+      u.offer.addListener(_onOffer);
+      u.start();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    ref.read(appUpdaterProvider).offer.removeListener(_onOffer);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) ref.read(appUpdaterProvider).onForeground();
+  }
+
+  void _onOffer() {
+    final u = ref.read(appUpdaterProvider);
+    if (u.offer.value == null || !mounted) return;
+    u.offer.value = null;
+    showUpdateDialog(context, u);
+  }
 
   int _index(BuildContext context) {
     final loc = GoRouterState.of(context).uri.path;
@@ -39,6 +78,7 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 760;
     final idx = _index(context);
+    final child = widget.child;
 
     return Scaffold(
       body: Stack(children: [

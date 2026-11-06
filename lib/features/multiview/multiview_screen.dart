@@ -24,6 +24,8 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
 
   @override
   void initState() {
+    final watching = ref.read(watchingProvider.notifier); // niente aggiornamenti in background durante la visione
+    Future.microtask(() => watching.state++);
     super.initState();
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -85,6 +87,8 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
     for (final s in _slots) {
       s?.dispose();
     }
+    final watching = ref.read(watchingProvider.notifier);
+    Future.microtask(() => watching.state--);
     WakelockPlus.disable();
     super.dispose();
   }

@@ -9,6 +9,7 @@ import 'download/download_manager.dart';
 import 'm3u/import_service.dart';
 import 'models/models.dart';
 import 'player/stream_engine.dart';
+import 'update/app_updater.dart';
 
 // ------------------------------------------------------------------ Infra
 
@@ -130,6 +131,18 @@ class SettingsNotifier extends Notifier<Settings> {
 }
 
 final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(SettingsNotifier.new);
+
+// ------------------------------------------------------------------ Aggiornamenti
+
+/// Schermate di visione aperte (player, multiview): niente download in background né finestre.
+final watchingProvider = StateProvider<int>((ref) => 0);
+
+/// Aggiornamento dell'app (feed della release, politica del fornitore, download in background, installazione).
+final appUpdaterProvider = ChangeNotifierProvider<AppUpdater>((ref) {
+  final u = AppUpdater(ref.watch(prefsProvider), watching: () => ref.read(watchingProvider) > 0);
+  ref.onDispose(u.dispose);
+  return u;
+});
 
 // ------------------------------------------------------------------ Dati
 
