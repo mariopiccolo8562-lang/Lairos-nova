@@ -29,6 +29,10 @@ class ImportService {
           receive.close();
           controller.close();
         }
+      } else if (msg is List && msg.isNotEmpty) {
+        controller.add(ImportProgress(phase: 'Errore', error: '${msg.first}'));
+        receive.close();
+        controller.close();
       }
     });
 

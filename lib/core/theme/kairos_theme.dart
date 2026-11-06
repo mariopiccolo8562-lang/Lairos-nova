@@ -77,7 +77,7 @@ class KairosTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: KairosColors.surface,
         elevation: 0,
         shape: RoundedRectangleBorder(

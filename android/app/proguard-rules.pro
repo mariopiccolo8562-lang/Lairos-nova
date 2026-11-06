@@ -1,0 +1,4 @@
+-keep class io.flutter.** { *; }
+-keep class com.alexmercerind.** { *; }
+-keep class dev.steenbakker.** { *; }
+-dontwarn io.flutter.embedding.**
