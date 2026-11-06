@@ -28,7 +28,7 @@ dependencies:
 
   # Rete / IO
   http: ^1.2.1
-  file_picker: ^8.0.5
+  file_picker: ^10.1.0
   shared_preferences: ^2.2.3
 
   # Immagini: cache su disco + limiti memoria per migliaia di loghi
