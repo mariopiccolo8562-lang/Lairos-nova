@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import '../download/download_manager.dart';
 import '../models/models.dart';
 
 /// Database SQLite con FTS5.
@@ -128,6 +129,22 @@ class KairosDb {
       );
 
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+
+      CREATE TABLE IF NOT EXISTS downloads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        path TEXT NOT NULL,
+        logo TEXT,
+        headers TEXT,
+        total INTEGER NOT NULL DEFAULT 0,
+        received INTEGER NOT NULL DEFAULT 0,
+        status INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dl_channel ON downloads(channel_id);
     ''');
   }
 
@@ -485,6 +502,66 @@ class KairosDb {
     final fail = r.first['fail_count'] as int;
     return (ok + 1) / (ok + fail + 2);
   }
+
+  // ---------------------------------------------------------------- Download
+
+  int insertDownload({
+    required int channelId,
+    required String name,
+    required String url,
+    required String path,
+    String? logo,
+    String? headers,
+  }) {
+    _db.execute(
+      'INSERT INTO downloads(channel_id, name, url, path, logo, headers, created_at) VALUES (?,?,?,?,?,?,?)',
+      [channelId, name, url, path, logo, headers, DateTime.now().millisecondsSinceEpoch],
+    );
+    return _db.lastInsertRowId;
+  }
+
+  List<DownloadItem> downloads() =>
+      _db.select('SELECT * FROM downloads ORDER BY created_at DESC').map(_rowToDownload).toList();
+
+  DownloadItem? download(int id) {
+    final r = _db.select('SELECT * FROM downloads WHERE id = ?', [id]);
+    return r.isEmpty ? null : _rowToDownload(r.first);
+  }
+
+  DownloadItem? downloadForChannel(int channelId) {
+    final r = _db.select('SELECT * FROM downloads WHERE channel_id = ? LIMIT 1', [channelId]);
+    return r.isEmpty ? null : _rowToDownload(r.first);
+  }
+
+  Map<String, String>? downloadHeaders(int id) {
+    final r = _db.select('SELECT headers FROM downloads WHERE id = ?', [id]);
+    return r.isEmpty ? null : _decodeHeaders(r.first['headers'] as String?);
+  }
+
+  void setDownloadStatus(int id, DownloadStatus s, {String? error}) => _db.execute(
+      'UPDATE downloads SET status = ?, error = ? WHERE id = ?', [s.index, error, id]);
+
+  void updateDownloadProgress(int id, {required int received, required int total}) => _db.execute(
+      'UPDATE downloads SET received = ?, total = ? WHERE id = ?', [received, total, id]);
+
+  void resetRunningDownloads() => _db.execute(
+      'UPDATE downloads SET status = ? WHERE status = ?',
+      [DownloadStatus.queued.index, DownloadStatus.running.index]);
+
+  void deleteDownload(int id) => _db.execute('DELETE FROM downloads WHERE id = ?', [id]);
+
+  DownloadItem _rowToDownload(Row r) => DownloadItem(
+        id: r['id'] as int,
+        channelId: r['channel_id'] as int,
+        name: r['name'] as String,
+        url: r['url'] as String,
+        path: r['path'] as String,
+        logo: r['logo'] as String?,
+        total: r['total'] as int,
+        received: r['received'] as int,
+        status: DownloadStatus.values[r['status'] as int],
+        error: r['error'] as String?,
+      );
 
   // ---------------------------------------------------------------- KV
 

@@ -4,6 +4,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/download/download_manager.dart';
 import '../../core/models/models.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
@@ -319,6 +320,31 @@ void showChannelMenu(BuildContext context, WidgetRef ref, Channel c) {
               ctx.push('/play/${c.id}');
             },
           ),
+          if (c.type == ChannelType.movie || c.type == ChannelType.series)
+            Builder(builder: (_) {
+              final dm = ref.read(downloadManagerProvider);
+              final existing = ref.read(dbProvider).downloadForChannel(c.id);
+              return ListTile(
+                leading: Icon(existing == null ? Icons.download_rounded : Icons.download_done_rounded, color: KairosColors.lime),
+                title: Text(existing == null
+                    ? 'Scarica per guardare offline'
+                    : existing.status == DownloadStatus.done ? 'Già scaricato' : 'Download in corso'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  if (existing != null) {
+                    ctx.go('/downloads');
+                    return;
+                  }
+                  await dm.enqueue(c);
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text('Download avviato: ${c.name}'),
+                      action: SnackBarAction(label: 'Vedi', onPressed: () => ctx.go('/downloads')),
+                    ));
+                  }
+                },
+              );
+            }),
           ListTile(
             leading: const Icon(Icons.grid_view_rounded),
             title: const Text('Apri in Multiview'),

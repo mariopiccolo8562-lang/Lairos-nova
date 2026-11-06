@@ -6,6 +6,7 @@ import 'core/models/models.dart';
 import 'core/providers.dart';
 import 'core/theme/kairos_theme.dart';
 import 'features/channels/channels_screen.dart';
+import 'features/downloads/downloads_screen.dart';
 import 'features/guide/guide_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/home/shell.dart';
@@ -41,6 +42,7 @@ final _routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: '/guide', builder: (_, __) => const GuideScreen()),
           GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
+          GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
           GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
         ],
       ),

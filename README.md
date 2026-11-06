@@ -52,6 +52,11 @@ Il `StreamEngine` (libmpv via `media_kit`) è progettato "antifragile":
 - **Cambia sorgente** manuale, overlay **diagnostica** (risoluzione, fps, bitrate, buffer, drop, reconnect)
 - **Multiview**: fino a 4 stream contemporanei, audio selezionabile
 
+**Download offline**
+- Film e episodi scaricabili (menu lungo-tap o dal player), coda con 2 download paralleli
+- **Pausa/riprendi** con `Range` HTTP, ripresa automatica dopo crash o riavvio
+- Velocità, ETA, spazio usato; il player usa automaticamente il file locale se presente
+
 **TV**
 - Rail laterale su schermi larghi, focus D-pad ovunque, `LEANBACK_LAUNCHER`, banner TV
 - APK split per ABI (arm64 / arm32 / x86_64)
@@ -67,10 +72,11 @@ lib/
     epg/xmltv_parser.dart      # parser XMLTV streaming
     xtream/xtream_api.dart     # player_api.php
     player/stream_engine.dart  # riconnessione, failover, watchdog, health
+    download/download_manager.dart # coda download VOD, resume Range, stato in DB
     providers.dart             # Riverpod: settings, paging, ricerca, azioni
     theme/kairos_theme.dart    # palette, GlassPanel, PlasmaText
   features/
-    home/ channels/ search/ guide/ player/ multiview/ settings/ import/
+    home/ channels/ search/ guide/ player/ multiview/ downloads/ settings/ import/
   shared/widgets/              # ChannelTile, ChannelCard, logo, menu, focus
 android/                       # manifest TV, icone, network config (Gradle generato da flutter create)
 ios/Runner/Info.plist          # HTTP consentito, audio background, .m3u
@@ -93,7 +99,7 @@ L'APK della CI è firmato con la chiave debug (installabile via sideload). Per i
 
 ## Roadmap suggerita
 - PiP nativo Android/iOS (il manifest è già pronto)
-- Registrazione locale e timer
+- Registrazione live e timer
 - Sincronizzazione preferiti via Kairos Control
 - Chromecast / AirPlay
 

@@ -78,11 +78,11 @@ class Channel {
   /// Header HTTP extra (es. User-Agent, Referer) da #EXTVLCOPT.
   final Map<String, String>? headers;
 
-  Channel copyWith({bool? isFavorite}) => Channel(
+  Channel copyWith({bool? isFavorite, String? url}) => Channel(
         id: id,
         playlistId: playlistId,
         name: name,
-        url: url,
+        url: url ?? this.url,
         groupName: groupName,
         logo: logo,
         tvgId: tvgId,

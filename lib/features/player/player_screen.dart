@@ -55,8 +55,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   void _load(int id, {bool resume = true}) {
     final db = ref.read(dbProvider);
-    final c = db.channel(id);
+    var c = db.channel(id);
     if (c == null) return;
+    final local = ref.read(downloadManagerProvider).localPathFor(id);
+    if (local != null) c = c.copyWith(url: local); // riproduzione offline
     setState(() => _channel = c);
     Duration? start;
     if (resume && c.type != ChannelType.live) {
@@ -437,6 +439,12 @@ class _Overlay extends ConsumerWidget {
                 case 'audio': _trackSheet(context, status.audioTracks, (t) => engine.setAudioTrack(t));
                 case 'sub': _trackSheet(context, status.subtitleTracks, (t) => engine.setSubtitleTrack(t));
                 case 'speed': _speedSheet(context, engine);
+                case 'download':
+                  ref.read(downloadManagerProvider).enqueue(c).then((item) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(item == null ? 'Già in download o scaricato' : 'Download avviato: ${c.name}')));
+                  });
               }
               onInteract();
             },
@@ -446,6 +454,8 @@ class _Overlay extends ConsumerWidget {
               PopupMenuItem(value: 'sub', child: ListTile(leading: const Icon(Icons.subtitles_rounded), title: Text('Sottotitoli (${status.subtitleTracks.length})'))),
               const PopupMenuItem(value: 'fit', child: ListTile(leading: Icon(Icons.aspect_ratio_rounded), title: Text('Formato schermo'))),
               if (!status.isLive) const PopupMenuItem(value: 'speed', child: ListTile(leading: Icon(Icons.speed_rounded), title: Text('Velocità'))),
+              if (c.type == ChannelType.movie || c.type == ChannelType.series)
+                const PopupMenuItem(value: 'download', child: ListTile(leading: Icon(Icons.download_rounded), title: Text('Scarica offline'))),
               const PopupMenuItem(value: 'multi', child: ListTile(leading: Icon(Icons.grid_view_rounded), title: Text('Multiview'))),
               const PopupMenuItem(value: 'info', child: ListTile(leading: Icon(Icons.analytics_outlined), title: Text('Diagnostica'))),
             ],

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'db/kairos_db.dart';
+import 'download/download_manager.dart';
 import 'm3u/import_service.dart';
 import 'models/models.dart';
 import 'player/stream_engine.dart';
@@ -22,6 +23,13 @@ final engineProvider = Provider<StreamEngine>((ref) {
   final engine = StreamEngine(ref.watch(dbProvider), profile: profile);
   ref.onDispose(engine.dispose);
   return engine;
+});
+
+final downloadManagerProvider = Provider<DownloadManager>((ref) {
+  final m = DownloadManager(ref.watch(dbProvider));
+  m.init();
+  ref.onDispose(m.dispose);
+  return m;
 });
 
 /// Stato del motore come stream (per ValueListenableBuilder usare engine.status).

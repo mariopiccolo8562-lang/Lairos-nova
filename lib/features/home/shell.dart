@@ -20,6 +20,7 @@ const _dests = [
   _Dest('/series', Icons.video_library_outlined, Icons.video_library_rounded, 'Serie'),
   _Dest('/guide', Icons.calendar_view_day_outlined, Icons.calendar_view_day_rounded, 'Guida'),
   _Dest('/search', Icons.search_rounded, Icons.search_rounded, 'Cerca'),
+  _Dest('/downloads', Icons.download_outlined, Icons.download_rounded, 'Download'),
   _Dest('/settings', Icons.tune_rounded, Icons.tune_rounded, 'Impostazioni'),
 ];
 
