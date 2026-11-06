@@ -72,7 +72,7 @@ lib/
   features/
     home/ channels/ search/ guide/ player/ multiview/ settings/ import/
   shared/widgets/              # ChannelTile, ChannelCard, logo, menu, focus
-android/                       # manifest TV, splits ABI, network config
+android/                       # manifest TV, icone, network config (Gradle generato da flutter create)
 ios/Runner/Info.plist          # HTTP consentito, audio background, .m3u
 .github/workflows/build.yml    # APK automatico → Releases "latest"
 ```
@@ -86,17 +86,10 @@ flutter build apk --release --split-per-abi
 flutter build ios --release     # su macOS con Xcode
 ```
 
-Prima build in locale: se mancano cartelle di piattaforma, `flutter create --platforms android,ios .` le rigenera senza toccare i file già presenti (poi elimina eventuali `*.gradle.kts` duplicati, come fa la CI).
+Prima build in locale: esegui `flutter create --org com.kairos --project-name kairos_nova --platforms android,ios .` per generare i file Gradle/Xcode (non sovrascrive manifest, risorse e Info.plist già presenti), come fa la CI.
 
-### Firma release Android (opzionale)
-Crea `android/key.properties`:
-```
-storeFile=/percorso/kairos.jks
-storePassword=...
-keyAlias=kairos
-keyPassword=...
-```
-Senza questo file l'APK viene firmato con la chiave debug (installabile via sideload).
+### Firma release Android
+L'APK della CI è firmato con la chiave debug (installabile via sideload). Per il Play Store aggiungi un keystore e la `signingConfigs.release` in `android/app/build.gradle.kts` dopo averlo generato.
 
 ## Roadmap suggerita
 - PiP nativo Android/iOS (il manifest è già pronto)

@@ -29,9 +29,12 @@ jobs:
       - name: Scaffold piattaforme
         run: |
           flutter create --org com.kairos --project-name kairos_nova --platforms android,ios .
-          # Il template nuovo usa Kotlin DSL: evita doppioni con i nostri file Groovy
-          find android -maxdepth 2 -name "*.gradle.kts" -print -delete
-          rm -rf android/app/src/main/kotlin/com/kairos/kairos_nova
+          # Allinea namespace/applicationId al nostro id e abilita multidex
+          sed -i 's/com\.kairos\.kairos_nova/com.kairos.nova/g' android/app/build.gradle.kts
+          sed -i 's/com\.kairos\.kairos_nova/com.kairos.nova/g' android/app/src/main/kotlin/com/kairos/kairos_nova/MainActivity.kt
+          mkdir -p android/app/src/main/kotlin/com/kairos/nova
+          git mv -f android/app/src/main/kotlin/com/kairos/kairos_nova/MainActivity.kt android/app/src/main/kotlin/com/kairos/nova/MainActivity.kt 2>/dev/null || mv android/app/src/main/kotlin/com/kairos/kairos_nova/MainActivity.kt android/app/src/main/kotlin/com/kairos/nova/MainActivity.kt
+          grep -n "namespace\|applicationId\|minSdk" android/app/build.gradle.kts
 
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
