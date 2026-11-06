@@ -1,0 +1,53 @@
+name: kairos_nova
+description: Kairos Nova — player IPTV futuristico, veloce e stabile (Android, iOS, Android TV).
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Stato / routing
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.2.0
+
+  # Player (libmpv): decodifica hardware, HLS/TS/DASH, buffer configurabile
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.4
+  media_kit_libs_video: ^1.0.4
+
+  # Database: SQLite nativo + FTS5, senza codegen. Scala a milioni di righe.
+  sqlite3: ^2.4.6
+  sqlite3_flutter_libs: ^0.5.24
+  path_provider: ^2.1.3
+  path: ^1.9.0
+
+  # Rete / IO
+  http: ^1.2.1
+  file_picker: ^8.0.5
+  shared_preferences: ^2.2.3
+  flutter_secure_storage: ^9.2.2
+
+  # Immagini: cache su disco + limiti memoria per migliaia di loghi
+  cached_network_image: ^3.3.1
+
+  # UI
+  flutter_animate: ^4.5.0
+  wakelock_plus: ^1.2.5
+  screen_brightness: ^1.0.1
+  volume_controller: ^2.0.7
+  share_plus: ^9.0.0
+  intl: ^0.19.0
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
