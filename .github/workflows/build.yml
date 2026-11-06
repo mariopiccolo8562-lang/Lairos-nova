@@ -34,7 +34,9 @@ jobs:
           sed -i 's/com\.kairos\.kairos_nova/com.kairos.nova/g' android/app/src/main/kotlin/com/kairos/kairos_nova/MainActivity.kt
           mkdir -p android/app/src/main/kotlin/com/kairos/nova
           git mv -f android/app/src/main/kotlin/com/kairos/kairos_nova/MainActivity.kt android/app/src/main/kotlin/com/kairos/nova/MainActivity.kt 2>/dev/null || mv android/app/src/main/kotlin/com/kairos/kairos_nova/MainActivity.kt android/app/src/main/kotlin/com/kairos/nova/MainActivity.kt
-          grep -n "namespace\|applicationId\|minSdk" android/app/build.gradle.kts
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/' android/app/build.gradle.kts
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts
+          grep -n "namespace\|applicationId\|Sdk" android/app/build.gradle.kts
 
       - run: rm -f test/widget_test.dart
       - run: flutter pub get
