@@ -22,13 +22,22 @@ final importServiceProvider =
 
 final engineProvider = Provider<StreamEngine>((ref) {
   final profile = ref.read(settingsProvider).bufferProfile;
-  final engine = StreamEngine(ref.watch(dbProvider), profile: profile);
-  ref.onDispose(engine.dispose);
+  final engine = StreamEngine(ref.watch(dbProvider), profile: profile, prefs: ref.read(prefsProvider));
+  // «Continua a guardare» si aggiorna quando un canale parte davvero, non a ogni tick di posizione
+  final pv = ref.read(playVersionProvider.notifier);
+  void onPlay() => Future.microtask(() => pv.state++);
+  engine.playVersion.addListener(onPlay);
+  ref.onDispose(() {
+    engine.playVersion.removeListener(onPlay);
+    engine.dispose();
+  });
   return engine;
 });
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
-  final m = DownloadManager(ref.watch(dbProvider));
+  // la visione ha la precedenza: i download si fermano con un lettore aperto e riprendono (Range) alla chiusura
+  final m = DownloadManager(ref.watch(dbProvider), watching: () => ref.read(watchingProvider) > 0);
+  ref.listen<int>(watchingProvider, (_, n) => m.onWatchingChanged(n > 0));
   m.init();
   ref.onDispose(m.dispose);
   return m;
@@ -318,10 +327,21 @@ final favoritesProvider = Provider<List<Channel>>((ref) {
 });
 final favVersionProvider = StateProvider<int>((ref) => 0);
 
+/// Cresce a ogni riproduzione registrata in cronologia (il motore all'avvio del canale, il lettore alla chiusura):
+/// al posto dello stato del motore, che emette decine di volte al secondo.
+final playVersionProvider = StateProvider<int>((ref) => 0);
+
 final recentProvider = Provider<List<Channel>>((ref) {
   ref.watch(dataVersionProvider);
-  ref.watch(engineStatusProvider);
+  ref.watch(playVersionProvider);
   return ref.watch(dbProvider).recent();
+});
+
+/// Totale contenuti della lista attiva: COUNT su centinaia di migliaia di righe, calcolato una volta e non a ogni build.
+final totalCountProvider = Provider<int>((ref) {
+  ref.watch(dataVersionProvider);
+  final pl = ref.watch(activePlaylistIdProvider);
+  return ref.watch(dbProvider).channelCount(playlistId: pl);
 });
 
 final searchQueryProvider = StateProvider<String>((ref) => '');

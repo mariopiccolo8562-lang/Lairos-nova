@@ -64,16 +64,19 @@ class DownloadItem {
 
 /// Download manager per contenuti VOD (film/serie) → visione offline.
 ///
-/// - coda con N download paralleli (default 2)
-/// - ripresa con `Range:` dopo pausa, crash o riavvio app
+/// - coda con un download alla volta (la banda serve al lettore)
+/// - con un lettore aperto ([watching]) i download si fermano da soli e riprendono alla chiusura
+/// - ripresa con `Range:` dopo pausa, crash, riavvio app o stop per visione
 /// - header HTTP del canale rispettati (User-Agent, Referer)
 /// - stato persistito in SQLite, file in Documents/KairosNova/
 /// - velocità e progresso in tempo reale tramite [ValueNotifier]
 class DownloadManager {
-  DownloadManager(this._db, {this.maxParallel = 2});
+  DownloadManager(this._db, {this.maxParallel = 1, bool Function()? watching})
+      : _watching = watching ?? (() => false);
 
   final KairosDb _db;
   final int maxParallel;
+  final bool Function() _watching;
 
   final items = ValueNotifier<List<DownloadItem>>(const []);
   final _clients = <int, http.Client>{};
@@ -128,6 +131,11 @@ class DownloadManager {
 
   void retry(int id) => resume(id);
 
+  /// Lettore aperto/chiuso: alla chiusura la coda riparte (i download fermati per la visione sono in coda).
+  void onWatchingChanged(bool watching) {
+    if (!watching) _pump();
+  }
+
   Future<void> delete(int id) async {
     _cancelled.add(id);
     _clients.remove(id)?.close();
@@ -172,6 +180,7 @@ class DownloadManager {
   void _refresh() => items.value = _db.downloads();
 
   void _pump() {
+    if (_watching()) return; // niente lavoro di fondo durante la visione
     final running = _db.downloads().where((d) => d.status == DownloadStatus.running).length;
     if (running >= maxParallel) return;
     final next = _db.downloads().where((d) => d.status == DownloadStatus.queued).toList();
@@ -218,8 +227,15 @@ class DownloadManager {
       var lastBytes = received;
       var speed = 0;
 
-      await for (final chunk in res.stream) {
+      // timeout anche sulla lettura del corpo: 30 s senza dati = connessione morta
+      final body = res.stream.timeout(const Duration(seconds: 30));
+      var yielded = false;
+      await for (final chunk in body) {
         if (_cancelled.contains(id)) break;
+        if (_watching()) {
+          yielded = true; // il lettore ha la precedenza: si riprende con Range a lettore chiuso
+          break;
+        }
         sink.add(chunk);
         received += chunk.length;
         final now = DateTime.now();
@@ -238,6 +254,12 @@ class DownloadManager {
 
       if (_cancelled.contains(id)) {
         _db.updateDownloadProgress(id, received: received, total: total);
+        _refresh();
+        return;
+      }
+      if (yielded) {
+        _db.updateDownloadProgress(id, received: received, total: total);
+        _db.setDownloadStatus(id, DownloadStatus.queued);
         _refresh();
         return;
       }

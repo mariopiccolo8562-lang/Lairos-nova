@@ -35,6 +35,10 @@ class PanelService extends ChangeNotifier {
     _rcv = _prefs.getString('kx_rcv') ?? '';
     _map = _decode(_prefs.getString('kx_pl_map'));
     _sigs = _decode(_prefs.getString('kx_pl_sig'));
+    // a lettore chiuso ripartono i lavori rimandati durante la visione (liste, refresh)
+    _ref.listen<int>(watchingProvider, (_, n) {
+      if (n == 0) unawaited(_runDeferred());
+    });
   }
 
   final Ref _ref;
@@ -50,6 +54,13 @@ class PanelService extends ChangeNotifier {
   Timer? _refresh;
   int _kickSeen = 0;
   int _updSeen = 0;
+  /// Lavori rimandati perché c'era un lettore aperto (§7: niente download di liste durante la visione).
+  List<PanelPlaylist>? _pendingPlaylists;
+  bool _pendingRefresh = false;
+  bool _pendingResync = false;
+  /// Classe dispositivo (D debole / N normale / O ottimo) riportata al pannello.
+  String _dev = 'N';
+  bool get _watching => _ref.read(watchingProvider) > 0;
   Map<String, String> _rc = const {};
   String _rcv = '';
   /// La voce è imposta dal fornitore nel pannello: nell'app si vede ma non si cambia.
@@ -73,17 +84,34 @@ class PanelService extends ChangeNotifier {
 
   // ------------------------------------------------------------------ avvio
 
-  /// Chiamato una volta dalla shell con versione e modello (dalla parte nativa).
-  Future<void> start({required String version, required String model}) async {
+  /// Chiamato una volta dalla shell con versione, modello e livello Android (dalla parte nativa).
+  Future<void> start({required String version, required String model, int sdk = 0}) async {
     _version = version;
     _model = model;
+    _dev = deviceClass(model, sdk);
     if (!linked) return;
     _client = _mkClient();
     unawaited(refresh());
     _beat?.cancel();
     _beat = Timer.periodic(const Duration(seconds: 60), (_) => unawaited(heartbeat()));
     _refresh?.cancel();
-    _refresh = Timer.periodic(const Duration(hours: 6), (_) => unawaited(refresh()));
+    _refresh = Timer.periodic(const Duration(hours: 6), (_) {
+      // con un lettore aperto il refresh si rinvia alla chiusura
+      if (_watching) {
+        _pendingRefresh = true;
+      } else {
+        unawaited(refresh());
+      }
+    });
+  }
+
+  /// Classe dispositivo di Kairos Adaptive: D = Android < 7 o modello low-end noto (Fire TV Stick 1ª/2ª gen,
+  /// Stick Lite, Fire TV 1ª gen); O = Android ≥ 9; N = il resto. Senza il livello Android resta N (o D dal modello).
+  static String deviceClass(String model, int sdk) {
+    const lowEnd = {'AFTM', 'AFTT', 'AFTSS', 'AFTB'};
+    if ((sdk > 0 && sdk < 24) || lowEnd.contains(model.trim().toUpperCase())) return 'D';
+    if (sdk >= 28) return 'O';
+    return 'N';
   }
 
   PanelClient _mkClient() => PanelClient(
@@ -135,7 +163,13 @@ class PanelService extends ChangeNotifier {
       state = s;
       lastError = null;
       if (s.raw.containsKey('rc')) _applyRc(s.raw['rc'], (s.raw['rcv'] ?? '').toString());
-      if (s.active) await _syncPlaylists(s.playlists);
+      if (s.active) {
+        if (_watching) {
+          _pendingPlaylists = s.playlists; // niente download di liste durante la visione: a lettore chiuso
+        } else {
+          await _syncPlaylists(s.playlists);
+        }
+      }
     } on PanelException catch (e) {
       lastError = e.message;
     } finally {
@@ -229,6 +263,10 @@ class PanelService extends ChangeNotifier {
 
   /// Riscarica le liste del fornitore (comando «Aggiorna le liste» o tasto in Impostazioni).
   Future<String> resync() async {
+    if (_watching) {
+      _pendingResync = true;
+      return 'rinviato a fine visione';
+    }
     final db = _ref.read(dbProvider);
     var n = 0;
     for (final id in providerPlaylistIds) {
@@ -242,21 +280,56 @@ class PanelService extends ChangeNotifier {
     return n == 0 ? 'nessuna lista del fornitore' : '$n liste aggiornate';
   }
 
+  /// Esegue i lavori rimandati durante la visione (una volta chiuso il lettore).
+  Future<void> _runDeferred() async {
+    if (_watching || busy) return;
+    if (_pendingRefresh) {
+      _pendingRefresh = false;
+      _pendingPlaylists = null;
+      await refresh();
+    }
+    final pls = _pendingPlaylists;
+    if (pls != null && !_watching) {
+      _pendingPlaylists = null;
+      busy = true;
+      notifyListeners();
+      try {
+        await _syncPlaylists(pls);
+      } finally {
+        busy = false;
+        notifyListeners();
+      }
+    }
+    if (_pendingResync && !_watching) {
+      _pendingResync = false;
+      await resync();
+    }
+  }
+
   // ------------------------------------------------------------------ battito e controllo remoto
 
   Future<void> heartbeat() async {
     final c = _client;
     if (c == null || state == null || !state!.active) return;
-    final watching = _ref.read(watchingProvider) > 0;
-    final st = _ref.read(engineProvider).status.value;
-    final title = watching && st.state == EngineState.playing ? (st.channel?.name ?? '') : '';
+    final watching = _watching;
+    // il motore si legge solo se esiste già: il battito non deve crearne uno (libmpv) a vuoto
+    final engine = StreamEngine.active;
+    final st = engine?.status.value;
+    final playing = st != null && (st.state == EngineState.playing || st.state == EngineState.buffering);
+    final title = watching && playing ? (st?.channel?.name ?? '') : '';
     final sett = _ref.read(settingsProvider);
     final cfg = {
       'bgupd': _ref.read(appUpdaterProvider).bgUpdate ? 'on' : 'off',
       'p.buffer': switch (sett.bufferProfile) { BufferProfile.lowLatency => 'fast', BufferProfile.balanced => 'balanced', BufferProfile.stable => 'stable' },
       'tvmode': sett.tvMode ? 'on' : 'off',
     };
-    final j = await c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: cfg, rcv: _rcv);
+    // misure del lettore per «Online ora»: bw (Mbps), line, dev, stalls10, ttff, fmt, drop
+    final stats = <String, Object?>{
+      if (engine != null) ...engine.panelStats() else 'line': StreamEngine.savedLine(_prefs),
+      'dev': _dev,
+    };
+    final j = await c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: cfg, stats: stats, rcv: _rcv);
+    if (!watching) unawaited(_runDeferred());
     if (j == null) return;
     if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
     // «Disconnetti» dal pannello: si conferma e l'app si scollega

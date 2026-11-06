@@ -48,8 +48,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final watching = ref.read(watchingProvider.notifier); // niente aggiornamenti in background durante la visione
     Future.microtask(() => watching.state++);
     _engine = ref.read(engineProvider);
-    _video = VideoController(_engine.player,
-        configuration: const VideoControllerConfiguration(enableHardwareAcceleration: true));
+    _video = _engine.video; // un solo VideoController per tutta la vita del motore (niente texture perse a ogni apertura)
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _load(widget.channelId);
@@ -136,12 +135,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final watching = ref.read(watchingProvider.notifier);
     Future.microtask(() => watching.state--);
     final st = _engine.status.value;
-    if (_channel != null && !st.isLive) {
+    if (_channel != null && !st.isLive && st.state != EngineState.idle) {
       ref.read(dbProvider).recordPlay(_channel!,
           positionMs: st.position.inMilliseconds, durationMs: st.duration.inMilliseconds);
+      final pv = ref.read(playVersionProvider.notifier); // «Continua a guardare» aggiornato una volta, alla chiusura
+      Future.microtask(() => pv.state++);
     }
-    _engine.stop();
-    _video.player; // keep reference
+    unawaited(_engine.stop());
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _focus.dispose();
@@ -238,100 +238,127 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         focusNode: _focus,
         autofocus: true,
         onKeyEvent: _onKey,
-        child: ValueListenableBuilder<EngineStatus>(
-          valueListenable: _engine.status,
-          builder: (context, st, _) => Stack(fit: StackFit.expand, children: [
-            // Video
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _toggleUi,
-              onDoubleTap: () { _engine.togglePause(); _flashUi(); },
-              onVerticalDragStart: _onVStart,
-              onVerticalDragUpdate: _onVUpdate,
-              onVerticalDragEnd: _onVEnd,
-              onHorizontalDragEnd: (d) {
-                if (!st.isLive) return;
-                if ((d.primaryVelocity ?? 0) < -500) setState(() => _showList = true);
-              },
-              child: Video(
-                controller: _video,
-                fit: _fit,
-                controls: NoVideoControls,
-                fill: Colors.black,
-              ),
+        child: Stack(fit: StackFit.expand, children: [
+          // Video: fuori dal ValueListenableBuilder, non si ricostruisce a ogni tick del motore
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleUi,
+            onDoubleTap: () { _engine.togglePause(); _flashUi(); },
+            onVerticalDragStart: _onVStart,
+            onVerticalDragUpdate: _onVUpdate,
+            onVerticalDragEnd: _onVEnd,
+            onHorizontalDragEnd: (d) {
+              if (!_engine.status.value.isLive) return;
+              if ((d.primaryVelocity ?? 0) < -500) setState(() => _showList = true);
+            },
+            child: Video(
+              controller: _video,
+              fit: _fit,
+              controls: NoVideoControls,
+              fill: Colors.black,
             ),
+          ),
 
-            // Dimmer software (luminosità)
-            if (_brightness < 1)
-              IgnorePointer(child: Container(color: Colors.black.withOpacity(1 - _brightness))),
+          // Dimmer software (luminosità)
+          if (_brightness < 1)
+            IgnorePointer(child: Container(color: Colors.black.withOpacity(1 - _brightness))),
 
-            // Stato connessione
-            if (st.state == EngineState.connecting ||
-                st.state == EngineState.buffering ||
-                st.state == EngineState.reconnecting)
-              Center(child: _Spinner(st)),
-            if (st.state == EngineState.failed) Center(child: _Failed(st, onRetry: () => _engine.play(c!), onAlt: _engine.nextSource)),
+          // Overlay che dipendono dallo stato del motore (posizione al massimo 4 volte al secondo)
+          ValueListenableBuilder<EngineStatus>(
+            valueListenable: _engine.status,
+            builder: (context, st, _) => Stack(fit: StackFit.expand, children: [
+              // Stato connessione
+              if (st.state == EngineState.connecting ||
+                  st.state == EngineState.buffering ||
+                  st.state == EngineState.reconnecting)
+                Center(child: _Spinner(st)),
+              if (st.state == EngineState.failed) Center(child: _Failed(st, onRetry: () => _engine.play(c!), onAlt: _engine.nextSource)),
+              // Fine di un contenuto on demand
+              if (st.state == EngineState.ended && c != null)
+                Center(child: _Ended(onReplay: () => _engine.play(c), onClose: () => context.pop())),
 
-            // Gesture feedback
-            if (_gesture != _Gesture.none)
-              Center(
-                child: GlassPanel(
-                  radius: 16,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(_gesture == _Gesture.brightness ? Icons.brightness_6_rounded : Icons.volume_up_rounded, color: KairosColors.cyan),
-                    const SizedBox(width: 12),
-                    SizedBox(width: 140, child: ProgressBar(_gestureValue, height: 5)),
-                  ]),
+              // Gesture feedback
+              if (_gesture != _Gesture.none)
+                Center(
+                  child: GlassPanel(
+                    radius: 16,
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(_gesture == _Gesture.brightness ? Icons.brightness_6_rounded : Icons.volume_up_rounded, color: KairosColors.cyan),
+                      const SizedBox(width: 12),
+                      SizedBox(width: 140, child: ProgressBar(_gestureValue, height: 5)),
+                    ]),
+                  ),
+                ),
+
+              // Numero canale digitato
+              if (_numberBuffer.isNotEmpty)
+                Positioned(
+                  top: 40, right: 40,
+                  child: GlassPanel(glow: true, child: Text(_numberBuffer,
+                      style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w800, letterSpacing: 4))),
+                ),
+
+              // Overlay diagnostica
+              if (settings.showHealthOverlay || _showInfo)
+                Positioned(top: 24, left: 24, child: _HealthBadge(st.health, st)),
+
+              // UI principale
+              AnimatedOpacity(
+                opacity: _showUi ? 1 : 0,
+                duration: const Duration(milliseconds: 220),
+                child: IgnorePointer(
+                  ignoring: !_showUi,
+                  child: _Overlay(
+                    channel: c,
+                    status: st,
+                    engine: _engine,
+                    fit: _fit,
+                    onFit: () => setState(() => _fit = _fit == BoxFit.contain ? BoxFit.cover : _fit == BoxFit.cover ? BoxFit.fill : BoxFit.contain),
+                    onList: () => setState(() => _showList = !_showList),
+                    onInfo: () => setState(() => _showInfo = !_showInfo),
+                    onZap: _zap,
+                    onInteract: _scheduleHide,
+                  ),
                 ),
               ),
+            ]),
+          ),
 
-            // Numero canale digitato
-            if (_numberBuffer.isNotEmpty)
-              Positioned(
-                top: 40, right: 40,
-                child: GlassPanel(glow: true, child: Text(_numberBuffer,
-                    style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w800, letterSpacing: 4))),
-              ),
-
-            // Overlay diagnostica
-            if (settings.showHealthOverlay || _showInfo)
-              Positioned(top: 24, left: 24, child: _HealthBadge(st.health, st)),
-
-            // UI principale
-            AnimatedOpacity(
-              opacity: _showUi ? 1 : 0,
-              duration: const Duration(milliseconds: 220),
-              child: IgnorePointer(
-                ignoring: !_showUi,
-                child: _Overlay(
-                  channel: c,
-                  status: st,
-                  engine: _engine,
-                  fit: _fit,
-                  onFit: () => setState(() => _fit = _fit == BoxFit.contain ? BoxFit.cover : _fit == BoxFit.cover ? BoxFit.fill : BoxFit.contain),
-                  onList: () => setState(() => _showList = !_showList),
-                  onInfo: () => setState(() => _showInfo = !_showInfo),
-                  onZap: _zap,
-                  onInteract: _scheduleHide,
-                ),
-              ),
+          // Lista canali laterale (non dipende dallo stato del motore)
+          if (_showList && c != null)
+            Positioned(
+              left: 0, top: 0, bottom: 0,
+              child: _SideList(
+                current: c,
+                onPick: (ch) { _load(ch.id, resume: false); setState(() => _showList = false); _scheduleHide(); },
+                onClose: () => setState(() => _showList = false),
+              ).animate().slideX(begin: -1, end: 0, duration: 240.ms, curve: Curves.easeOutCubic),
             ),
-
-            // Lista canali laterale
-            if (_showList && c != null)
-              Positioned(
-                left: 0, top: 0, bottom: 0,
-                child: _SideList(
-                  current: c,
-                  onPick: (ch) { _load(ch.id, resume: false); setState(() => _showList = false); _scheduleHide(); },
-                  onClose: () => setState(() => _showList = false),
-                ).animate().slideX(begin: -1, end: 0, duration: 240.ms, curve: Curves.easeOutCubic),
-              ),
-          ]),
-        ),
+        ]),
       ),
     );
   }
+}
+
+/// Fine di un film/episodio: «Riguarda» o «Chiudi» (nessun riavvio automatico).
+class _Ended extends StatelessWidget {
+  const _Ended({required this.onReplay, required this.onClose});
+  final VoidCallback onReplay, onClose;
+  @override
+  Widget build(BuildContext context) => GlassPanel(
+        radius: 18,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.check_circle_outline_rounded, color: KairosColors.lime, size: 40),
+          const SizedBox(height: 10),
+          const Text('Fine', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 14),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            FilledButton.icon(autofocus: true, onPressed: onClose, icon: const Icon(Icons.arrow_back_rounded), label: const Text('Chiudi')),
+            const SizedBox(width: 10),
+            OutlinedButton.icon(onPressed: onReplay, icon: const Icon(Icons.replay_rounded), label: const Text('Riguarda')),
+          ]),
+        ]),
+      );
 }
 
 enum _Gesture { none, brightness, volume }
@@ -390,10 +417,12 @@ class _HealthBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       radius: 10,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${h.resolutionLabel} ${h.width}×${h.height} · ${h.fps.toStringAsFixed(0)} fps · ${h.codec}', style: s.copyWith(color: KairosColors.cyan)),
-        Text('bitrate ${h.bitrateKbps} kbps · buffer ${h.bufferSeconds.toStringAsFixed(1)}s', style: s),
-        Text('drop ${h.droppedFrames} · reconnect ${h.reconnects} · start ${h.latencyMs} ms', style: s),
-        Text('audio ${st.audioTracks.length} · sub ${st.subtitleTracks.length} · ${st.state.name}', style: s),
+        Text('${h.resolutionLabel} ${h.width}×${h.height} · ${h.fps.toStringAsFixed(0)} fps · ${h.codec}${h.hwdec.isEmpty ? '' : ' · ${h.hwdec}'}',
+            style: s.copyWith(color: KairosColors.cyan)),
+        Text('bitrate ${h.bitrateKbps} kbps · rete ${h.speedKbps} kbps · buffer ${h.bufferSeconds.toStringAsFixed(1)}s', style: s),
+        Text('drop ${h.droppedFrames} · stalli ${h.stalls} · reconnect ${h.reconnects} · start ${h.latencyMs} ms', style: s),
+        Text('linea ${h.line}${h.fmt.isEmpty ? '' : ' · ${h.fmt}'} · audio ${st.audioTracks.length} · sub ${st.subtitleTracks.length} · ${st.state.name}', style: s),
+        if (h.message != null) Text(h.message!, style: s.copyWith(color: KairosColors.magenta)),
       ]),
     );
   }
@@ -451,7 +480,10 @@ class _Overlay extends ConsumerWidget {
                 case 'source': engine.nextSource();
                 case 'info': onInfo();
                 case 'fit': onFit();
-                case 'multi': context.push('/multiview?add=${c.id}');
+                case 'multi':
+                  // il lettore singolo si ferma (niente audio doppio né banda ×5): questa schermata viene sostituita
+                  unawaited(engine.pause());
+                  context.pushReplacement('/multiview?add=${c.id}');
                 case 'audio': _trackSheet(context, status.audioTracks, (t) => engine.setAudioTrack(t));
                 case 'sub': _trackSheet(context, status.subtitleTracks, (t) => engine.setSubtitleTrack(t));
                 case 'speed': _speedSheet(context, engine);

@@ -149,6 +149,12 @@ class StreamHealth {
     this.reconnects = 0,
     this.latencyMs = 0,
     this.codec = '',
+    this.speedKbps = 0,
+    this.stalls = 0,
+    this.hwdec = '',
+    this.line = '',
+    this.fmt = '',
+    this.message,
   });
 
   final double bufferSeconds;
@@ -158,8 +164,56 @@ class StreamHealth {
   final double fps;
   final int droppedFrames;
   final int reconnects;
+  /// Tempo dall'apertura al primo fotogramma (ttff), ms.
   final int latencyMs;
   final String codec;
+  /// Velocità di lettura dalla rete (kbit/s, `cache-speed` di mpv).
+  final int speedKbps;
+  /// Stalli (buffering a visione avviata) nella sessione del lettore.
+  final int stalls;
+  /// Decoder hardware in uso (`hwdec-current`), vuoto = software.
+  final String hwdec;
+  /// Classe della linea (weak / normal / good) di Kairos Adaptive.
+  final String line;
+  /// Formato effettivo (ts / hls / …).
+  final String fmt;
+  /// Ultimo errore non fatale del lettore (solo diagnostica).
+  final String? message;
+
+  StreamHealth copyWith({
+    double? bufferSeconds,
+    int? bitrateKbps,
+    int? width,
+    int? height,
+    double? fps,
+    int? droppedFrames,
+    int? reconnects,
+    int? latencyMs,
+    String? codec,
+    int? speedKbps,
+    int? stalls,
+    String? hwdec,
+    String? line,
+    String? fmt,
+    String? message,
+  }) =>
+      StreamHealth(
+        bufferSeconds: bufferSeconds ?? this.bufferSeconds,
+        bitrateKbps: bitrateKbps ?? this.bitrateKbps,
+        width: width ?? this.width,
+        height: height ?? this.height,
+        fps: fps ?? this.fps,
+        droppedFrames: droppedFrames ?? this.droppedFrames,
+        reconnects: reconnects ?? this.reconnects,
+        latencyMs: latencyMs ?? this.latencyMs,
+        codec: codec ?? this.codec,
+        speedKbps: speedKbps ?? this.speedKbps,
+        stalls: stalls ?? this.stalls,
+        hwdec: hwdec ?? this.hwdec,
+        line: line ?? this.line,
+        fmt: fmt ?? this.fmt,
+        message: message ?? this.message,
+      );
 
   String get resolutionLabel {
     if (height >= 2100) return '4K';

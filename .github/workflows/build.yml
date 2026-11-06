@@ -41,6 +41,45 @@ jobs:
           grep -q "androidx.core:core-ktx" android/app/build.gradle.kts || printf '\ndependencies {\n    implementation("androidx.core:core-ktx:1.13.1")\n}\n' >> android/app/build.gradle.kts
           grep -n "namespace\|applicationId\|Sdk" android/app/build.gradle.kts
 
+      # Chiave di firma. Senza una chiave fissa ogni esecuzione firma con una chiave diversa e Android rifiuta
+      # l'aggiornamento sopra la versione installata (l'app stessa lo scarta: firma diversa). Serve la chiave
+      # definitiva nei segreti del repo: ANDROID_KEYSTORE_B64 + ANDROID_KEYSTORE_PASSWORD (+ ANDROID_KEY_ALIAS e
+      # ANDROID_KEY_PASSWORD se la chiave è stata creata a mano). Mai una chiave dentro al repo: è pubblico.
+      - name: Chiave di firma
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            [ -n "$KS_PASS" ] || { echo "::error::Manca il segreto ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+            echo "$KS_B64" | tr -d ' \r\n' | base64 -d > "$RUNNER_TEMP/release.jks" \
+              || { echo "::error::ANDROID_KEYSTORE_B64 non è copiato per intero: incollalo di nuovo"; exit 1; }
+            keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$KS_PASS" > /dev/null \
+              || { echo "::error::La chiave non si apre: controlla ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+            echo "KS_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Firma con la chiave definitiva"
+            # il build.gradle.kts è generato da «flutter create»: la firma si aggiunge in coda
+            cat >> android/app/build.gradle.kts <<'KTS'
+
+          // Firma Kairos: chiave definitiva dai segreti del repo (percorso in KS_PATH, password/alias nell'ambiente)
+          val kxKeystore = System.getenv("KS_PATH")?.takeIf { it.isNotEmpty() }?.let { file(it) }
+          if (kxKeystore != null && kxKeystore.exists()) android {
+              signingConfigs {
+                  create("kairos") {
+                      storeFile = kxKeystore
+                      storePassword = System.getenv("KS_PASS")
+                      keyAlias = System.getenv("KEY_ALIAS")
+                      keyPassword = System.getenv("KEY_PASS")
+                  }
+              }
+              buildTypes { getByName("release") { signingConfig = signingConfigs.getByName("kairos") } }
+          }
+          KTS
+            tail -n 14 android/app/build.gradle.kts
+          else
+            echo "::warning::Nessuna chiave di firma nei segreti: l'APK è firmato con una chiave temporanea e NON potrà aggiornare quello installato. Aggiungi ANDROID_KEYSTORE_B64 e ANDROID_KEYSTORE_PASSWORD in Settings → Secrets → Actions."
+          fi
+
       # Versione: 1.0.<numero di build>, così ogni build è più nuova della precedente e l'app sa aggiornarsi
       - name: Versione
         id: ver
@@ -55,6 +94,10 @@ jobs:
       - run: flutter test
 
       - name: Build APK (release, split per ABI)
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'kairosnova' }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: flutter build apk --release --split-per-abi --build-name=${{ steps.ver.outputs.version }} --build-number=${{ steps.ver.outputs.code }}
 
       - name: Rinomina APK

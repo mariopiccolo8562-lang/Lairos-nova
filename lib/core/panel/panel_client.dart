@@ -186,7 +186,8 @@ class PanelClient {
   }
 
   /// Battito per «Online ora» e per il controllo remoto (impostazioni imposte, comandi, aggiornamento).
-  Future<Map<String, dynamic>?> heartbeat({required String state, String title = '', String screen = '', int kickAck = 0, Map<String, Object?> cfg = const {}, String rcv = ''}) async {
+  /// [stats]: misure del lettore (bw Mbps, line, dev, stalls10, ttff, fmt, drop) mostrate dal pannello in «Online ora».
+  Future<Map<String, dynamic>?> heartbeat({required String state, String title = '', String screen = '', int kickAck = 0, Map<String, Object?> cfg = const {}, Map<String, Object?> stats = const {}, String rcv = ''}) async {
     try {
       final r = await _post('/api/player/heartbeat', {
         ..._auth(),
@@ -204,6 +205,7 @@ class PanelClient {
         'net': {'type': ''},
         'vpn': 'off',
         'cfg': cfg,
+        'stats': stats,
         'rcv': rcv,
         if (kickAck > 0) 'kickAck': kickAck,
       });

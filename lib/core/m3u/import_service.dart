@@ -105,6 +105,7 @@ Future<void> _playlistWorker(_Job job) async {
   final send = job.sendPort;
   KairosDb? db;
   BulkInserter? bulk;
+  http.Client? client;
   try {
     db = KairosDb.openAtPath(job.dbPath);
     send.send(const ImportProgress(phase: 'Connessione…'));
@@ -120,7 +121,7 @@ Future<void> _playlistWorker(_Job job) async {
       final uri = Uri.parse(job.kind == PlaylistKind.xtream
           ? '${job.source}/get.php?username=${job.username}&password=${job.password}&type=m3u_plus&output=ts'
           : job.source);
-      final client = http.Client();
+      client = http.Client();
       final req = http.Request('GET', uri)
         ..headers['User-Agent'] = 'KairosNova/1.0'
         ..headers['Accept-Encoding'] = 'gzip';
@@ -129,12 +130,13 @@ Future<void> _playlistWorker(_Job job) async {
         throw HttpException('HTTP ${res.statusCode} dal server della lista');
       }
       total = res.contentLength;
-      bytes = res.stream;
+      // timeout anche sulla lettura del corpo: 30 s senza dati = connessione morta
+      bytes = res.stream.timeout(const Duration(seconds: 30));
     }
 
     send.send(const ImportProgress(phase: 'Download e analisi…'));
-    db.clearChannels(job.playlistId);
-    bulk = db.beginBulkInsert(job.playlistId);
+    // i vecchi canali si cancellano dentro la transazione: se l'import fallisce restano quelli di prima
+    bulk = db.beginBulkInsert(job.playlistId, clear: true);
 
     final parser = M3uStreamParser();
     var read = 0;
@@ -184,6 +186,7 @@ Future<void> _playlistWorker(_Job job) async {
     bulk?.rollback();
     send.send(ImportProgress(phase: 'Errore', error: _friendly(e)));
   } finally {
+    client?.close();
     db?.close();
   }
 }
@@ -194,17 +197,19 @@ Future<void> _epgWorker(_Job job) async {
   final send = job.sendPort;
   KairosDb? db;
   EpgBulkInserter? bulk;
+  http.Client? client;
   try {
     db = KairosDb.openAtPath(job.dbPath);
     send.send(const ImportProgress(phase: 'Scarico guida TV…'));
 
-    final client = http.Client();
+    client = http.Client();
     final req = http.Request('GET', Uri.parse(job.source))
       ..headers['User-Agent'] = 'KairosNova/1.0';
     final res = await client.send(req).timeout(const Duration(seconds: 60));
     if (res.statusCode >= 400) throw HttpException('HTTP ${res.statusCode} dal server EPG');
 
-    Stream<List<int>> stream = res.stream;
+    // timeout anche sulla lettura del corpo (30 s senza dati)
+    Stream<List<int>> stream = res.stream.timeout(const Duration(seconds: 30));
     final isGz = job.source.endsWith('.gz') ||
         (res.headers['content-type'] ?? '').contains('gzip');
     if (isGz) stream = stream.transform(gzip.decoder);
@@ -239,6 +244,7 @@ Future<void> _epgWorker(_Job job) async {
     bulk?.rollback();
     send.send(ImportProgress(phase: 'Errore', error: _friendly(e)));
   } finally {
+    client?.close();
     db?.close();
   }
 }

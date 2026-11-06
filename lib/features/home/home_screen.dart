@@ -15,14 +15,14 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final db = ref.watch(dbProvider);
     final playlists = ref.watch(playlistsProvider);
     final active = ref.watch(activePlaylistIdProvider);
+    // recentProvider cambia solo quando parte un canale (non a ogni tick del lettore); il COUNT è in un provider
     final recent = ref.watch(recentProvider);
     final favs = ref.watch(favoritesProvider);
     final liveGroups = ref.watch(groupsProvider(ChannelType.live));
     final movieGroups = ref.watch(groupsProvider(ChannelType.movie));
-    final total = db.channelCount(playlistId: active);
+    final total = ref.watch(totalCountProvider);
     final hero = recent.isNotEmpty ? recent.first : (favs.isNotEmpty ? favs.first : null);
 
     final wide = MediaQuery.sizeOf(context).width >= 760;

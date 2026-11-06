@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -35,13 +37,26 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
     });
   }
 
-  void _assign(int i, Channel? c) {
+  Future<void> _assign(int i, Channel? c) async {
     if (c == null) return;
-    _slots[i]?.dispose();
+    final old = _slots[i];
+    if (old != null) {
+      setState(() => _slots[i] = null); // il riquadro sparisce prima che il suo player venga liberato
+      await old.dispose(); // e il player precedente si libera prima di crearne un altro
+      if (!mounted) return;
+    }
     final slot = _Slot(c);
     slot.player.setVolume(i == _audio ? 100 : 0);
-    slot.player.open(Media(c.url));
+    slot.player.open(Media(c.url, httpHeaders: c.headers));
     setState(() => _slots[i] = slot);
+  }
+
+  /// Dal multiview al lettore singolo: questa schermata viene sostituita (i riquadri si chiudono, niente audio doppio).
+  void _openSingle(Channel c) {
+    for (final s in _slots) {
+      unawaited(s?.player.pause() ?? Future<void>.value());
+    }
+    context.pushReplacement('/play/${c.id}');
   }
 
   void _setAudio(int i) {
@@ -79,13 +94,13 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
         ]),
       ),
     );
-    if (c != null) _assign(i, c);
+    if (c != null && mounted) await _assign(i, c);
   }
 
   @override
   void dispose() {
     for (final s in _slots) {
-      s?.dispose();
+      if (s != null) unawaited(s.dispose());
     }
     final watching = ref.read(watchingProvider.notifier);
     Future.microtask(() => watching.state--);
@@ -125,8 +140,8 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
                       slot: _slots[i],
                       hasAudio: _audio == i,
                       onTap: () => _slots[i] == null ? _pick(i) : _setAudio(i),
-                      onDouble: () => _slots[i] == null ? null : context.push('/play/${_slots[i]!.channel.id}'),
-                      onRemove: () { _slots[i]?.dispose(); setState(() => _slots[i] = null); },
+                      onDouble: () { final s = _slots[i]; if (s != null) _openSingle(s.channel); },
+                      onRemove: () { final s = _slots[i]; if (s != null) unawaited(s.dispose()); setState(() => _slots[i] = null); },
                     ),
               ],
             ),
@@ -143,15 +158,22 @@ class _Slot {
     final n = player.platform;
     if (n is NativePlayer) {
       n.setProperty('hwdec', 'auto-safe');
+      n.setProperty('cache-on-disk', 'no');
       n.setProperty('cache-secs', '8');
-      n.setProperty('stream-lavf-o', 'reconnect=1,reconnect_streamed=1,reconnect_delay_max=4');
+      n.setProperty('demuxer-readahead-secs', '8');
+      n.setProperty('cache-pause-initial', 'yes');
+      n.setProperty('network-timeout', '15');
+      // media_kit non imposta stream-lavf-o: qui si aggiunge con change-list (il suffisso -append non è una proprietà)
+      for (final kv in const ['reconnect=1', 'reconnect_streamed=1', 'reconnect_delay_max=4']) {
+        n.command(['change-list', 'stream-lavf-o', 'append', kv]);
+      }
     }
     controller = VideoController(player);
   }
   final Channel channel;
   late final Player player;
   late final VideoController controller;
-  void dispose() => player.dispose();
+  Future<void> dispose() => player.dispose();
 }
 
 class _Tile extends StatelessWidget {

@@ -48,6 +48,8 @@ class KairosDb {
     _db.execute('PRAGMA cache_size = -32768'); // 32 MB
     _db.execute('PRAGMA mmap_size = 268435456'); // 256 MB
     _db.execute('PRAGMA foreign_keys = ON');
+    // Scritture concorrenti (import in isolate + UI): attesa fino a 5 s invece di SQLITE_BUSY immediato.
+    _db.execute('PRAGMA busy_timeout = 5000');
   }
 
   void _migrate() {
@@ -82,6 +84,7 @@ class KairosDb {
       CREATE INDEX IF NOT EXISTS idx_ch_pl_group ON channels(playlist_id, type, group_name, sort_key);
       CREATE INDEX IF NOT EXISTS idx_ch_tvg ON channels(tvg_id);
       CREATE INDEX IF NOT EXISTS idx_ch_number ON channels(playlist_id, number);
+      CREATE INDEX IF NOT EXISTS ch_type_name ON channels(type, name COLLATE NOCASE);
 
       CREATE VIRTUAL TABLE IF NOT EXISTS channels_fts USING fts5(
         name, group_name, content='channels', content_rowid='id',
@@ -146,6 +149,10 @@ class KairosDb {
       );
       CREATE INDEX IF NOT EXISTS idx_dl_channel ON downloads(channel_id);
     ''');
+    // Colonne aggiunte dopo la prima versione (ALTER fallisce se la colonna c'è già).
+    try {
+      _db.execute('ALTER TABLE stream_stats ADD COLUMN kbps INTEGER NOT NULL DEFAULT 0');
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------- Playlist
@@ -202,8 +209,10 @@ class KairosDb {
 
   /// Inserimento bulk: una transazione, statement preparato, nessun trigger
   /// FTS per riga (ricostruito alla fine con 'rebuild' = 5-10x più veloce).
-  BulkInserter beginBulkInsert(int playlistId) =>
-      BulkInserter._(this, playlistId);
+  /// Con [clear] i canali precedenti della lista si cancellano DENTRO la transazione:
+  /// se l'import fallisce, il rollback li riporta (niente lista vuota).
+  BulkInserter beginBulkInsert(int playlistId, {bool clear = false}) =>
+      BulkInserter._(this, playlistId, clear: clear);
 
   void clearChannels(int playlistId) =>
       _db.execute('DELETE FROM channels WHERE playlist_id = ?', [playlistId]);
@@ -254,13 +263,16 @@ class KairosDb {
     return r.isEmpty ? null : _rowToChannel(r.first, _favoriteKeys());
   }
 
-  /// Link alternativi per lo stesso canale (stesso tvg-id o stesso nome):
-  /// usati dal motore per il failover automatico.
+  /// Link alternativi per lo stesso canale (stesso nome o stesso tvg-id):
+  /// usati dal motore per il failover automatico. Due rami indicizzati
+  /// (ch_type_name con COLLATE NOCASE, idx_ch_tvg): niente scansione completa.
   List<Channel> alternatives(Channel c, {int limit = 5}) {
+    final tvg = (c.tvgId ?? '').trim();
     final r = _db.select(
-      'SELECT * FROM channels WHERE id != ? AND type = ? AND '
-      '((tvg_id IS NOT NULL AND tvg_id != \'\' AND tvg_id = ?) OR lower(name) = lower(?)) LIMIT ?',
-      [c.id, c.type.index, c.tvgId ?? '', c.name, limit],
+      'SELECT * FROM channels WHERE id != ? AND type = ? AND name = ? COLLATE NOCASE '
+      '${tvg.isEmpty ? '' : 'UNION SELECT * FROM channels WHERE id != ? AND type = ? AND tvg_id = ? '}'
+      'LIMIT ?',
+      [c.id, c.type.index, c.name, if (tvg.isNotEmpty) ...[c.id, c.type.index, tvg], limit],
     );
     return r.map((e) => _rowToChannel(e, const {})).toList();
   }
@@ -492,6 +504,23 @@ class KairosDb {
     );
   }
 
+  /// Bitrate medio osservato su un link (kbit/s): serve a scegliere la «versione più leggera» sui TS.
+  void recordStreamBitrate(String url, int kbps) {
+    if (kbps <= 0) return;
+    _db.execute(
+      'INSERT INTO stream_stats(url_hash, kbps, last_seen) VALUES (?,?,?) '
+      'ON CONFLICT(url_hash) DO UPDATE SET kbps = CASE WHEN kbps = 0 THEN excluded.kbps ELSE (kbps + excluded.kbps) / 2 END, '
+      'last_seen = excluded.last_seen',
+      [url.hashCode.toRadixString(16), kbps, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  /// Bitrate noto di un link (kbit/s), 0 se mai visto.
+  int knownKbps(String url) {
+    final r = _db.select('SELECT kbps FROM stream_stats WHERE url_hash = ?', [url.hashCode.toRadixString(16)]);
+    return r.isEmpty ? 0 : (r.first['kbps'] as int? ?? 0);
+  }
+
   /// Punteggio affidabilità 0..1 (usato per ordinare i link alternativi).
   double reliability(String url) {
     final r = _db.select(
@@ -579,10 +608,15 @@ class KairosDb {
 
 /// Inserimento massivo canali: ~150k righe/s su un telefono medio.
 class BulkInserter {
-  BulkInserter._(this._kdb, this.playlistId) {
+  BulkInserter._(this._kdb, this.playlistId, {bool clear = false}) {
     _db = _kdb._db;
     _db.execute('BEGIN');
     _db.execute('DROP TRIGGER IF EXISTS ch_ai');
+    if (clear) {
+      // vecchi canali via nella stessa transazione (senza trigger FTS per riga: l'indice si ricostruisce al commit)
+      _db.execute('DROP TRIGGER IF EXISTS ch_ad');
+      _db.execute('DELETE FROM channels WHERE playlist_id = ?', [playlistId]);
+    }
     _stmt = _db.prepare(
       'INSERT INTO channels(playlist_id, name, url, group_name, logo, tvg_id, number, type, catchup_days, headers, sort_key) '
       'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
@@ -629,6 +663,9 @@ class BulkInserter {
     _db.execute('''
       CREATE TRIGGER IF NOT EXISTS ch_ai AFTER INSERT ON channels BEGIN
         INSERT INTO channels_fts(rowid, name, group_name) VALUES (new.id, new.name, new.group_name);
+      END;
+      CREATE TRIGGER IF NOT EXISTS ch_ad AFTER DELETE ON channels BEGIN
+        INSERT INTO channels_fts(channels_fts, rowid, name, group_name) VALUES('delete', old.id, old.name, old.group_name);
       END;
     ''');
     _db.execute("INSERT INTO channels_fts(channels_fts) VALUES('rebuild')");

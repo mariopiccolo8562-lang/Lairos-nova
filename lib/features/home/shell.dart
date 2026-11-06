@@ -52,7 +52,10 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
       panel.uiCommand.addListener(_onPanelCommand);
       await u.start();
       final info = await NovaNative.deviceInfo();
-      await panel.start(version: u.currentVersion, model: (info['model'] ?? '').toString());
+      await panel.start(
+          version: u.currentVersion,
+          model: (info['model'] ?? '').toString(),
+          sdk: info['sdk'] is num ? (info['sdk'] as num).toInt() : 0);
       // controllo genitori: al primo avvio si chiede di scegliere il PIN (quello iniziale è 0000)
       await Future<void>.delayed(const Duration(milliseconds: 1800));
       if (mounted) await maybeAskParentalPin(context, ref);
