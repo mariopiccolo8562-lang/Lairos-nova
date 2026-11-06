@@ -11,7 +11,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import '../player/stream_engine.dart';
 import '../providers.dart';
-import '../update/app_updater.dart';
 import '../xtream/xtream_api.dart';
 import 'panel_client.dart';
 
