@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -99,8 +100,10 @@ class Settings {
 
 class SettingsNotifier extends Notifier<Settings> {
   @override
-  Settings build() {
-    final p = ref.watch(prefsProvider);
+  Settings build() => _imposed(_own(ref.watch(prefsProvider)));
+
+  /// Impostazioni scelte dal cliente (salvate sul dispositivo).
+  Settings _own(SharedPreferences p) {
     return Settings(
       bufferProfile: BufferProfile.values[p.getInt('buffer') ?? 1],
       parentalPin: p.getString('pin'),
@@ -114,18 +117,45 @@ class SettingsNotifier extends Notifier<Settings> {
     );
   }
 
+  /// Voci imposte dal fornitore nel pannello Kairos Control (controllo remoto, salvate in `kx_rc` dal PanelService):
+  /// vincono su quelle scelte qui, che restano salvate e tornano valide quando il fornitore libera la voce.
+  Map<String, String> remote() {
+    try {
+      final raw = ref.read(prefsProvider).getString('kx_rc') ?? '';
+      final d = raw.isEmpty ? null : jsonDecode(raw);
+      if (d is Map) return {for (final e in d.entries) if (e.value != null && e.value.toString().isNotEmpty) e.key.toString(): e.value.toString()};
+    } catch (_) {}
+    return const {};
+  }
+  bool imposed(String key) => remote().containsKey(key);
+  Settings _imposed(Settings s) {
+    final rc = remote();
+    if (rc.isEmpty) return s;
+    return s.copyWith(
+      bufferProfile: switch (rc['p.buffer']) { 'fast' => BufferProfile.lowLatency, 'balanced' => BufferProfile.balanced, 'stable' => BufferProfile.stable, _ => null },
+      tvMode: switch (rc['tvmode']) { 'on' => true, 'off' => false, _ => null },
+    );
+  }
+  /// Il pannello ha cambiato le voci imposte: si riapplicano sopra le scelte del cliente.
+  void remoteChanged() {
+    state = _imposed(_own(ref.read(prefsProvider)));
+    ref.read(engineProvider).setProfile(state.bufferProfile);
+  }
+
   void update(Settings Function(Settings) fn) {
-    state = fn(state);
     final p = ref.read(prefsProvider);
-    p.setInt('buffer', state.bufferProfile.index);
-    state.parentalPin == null ? p.remove('pin') : p.setString('pin', state.parentalPin!);
-    p.setStringList('hidden', state.hiddenGroups.toList());
-    p.setBool('autoplay', state.autoplayLast);
-    p.setBool('health', state.showHealthOverlay);
-    p.setInt('cols', state.gridColumns);
-    state.epgUrlOverride == null ? p.remove('epg') : p.setString('epg', state.epgUrlOverride!);
-    p.setBool('tv', state.tvMode);
-    p.setString('lang', state.preferredAudioLang);
+    // la modifica si applica alle scelte del cliente (non a quelle imposte dal fornitore), e si salva
+    final own = fn(_own(p));
+    p.setInt('buffer', own.bufferProfile.index);
+    own.parentalPin == null ? p.remove('pin') : p.setString('pin', own.parentalPin!);
+    p.setStringList('hidden', own.hiddenGroups.toList());
+    p.setBool('autoplay', own.autoplayLast);
+    p.setBool('health', own.showHealthOverlay);
+    p.setInt('cols', own.gridColumns);
+    own.epgUrlOverride == null ? p.remove('epg') : p.setString('epg', own.epgUrlOverride!);
+    p.setBool('tv', own.tvMode);
+    p.setString('lang', own.preferredAudioLang);
+    state = _imposed(own);
     ref.read(engineProvider).setProfile(state.bufferProfile);
   }
 }

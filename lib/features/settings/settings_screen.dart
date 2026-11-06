@@ -187,11 +187,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(children: [
               ListTile(
                 title: const Text('Profilo buffer'),
-                subtitle: Text(switch (s.bufferProfile) {
+                subtitle: Text((switch (s.bufferProfile) {
                   BufferProfile.lowLatency => 'Bassa latenza (4s) · per sport e connessioni ottime',
                   BufferProfile.balanced => 'Bilanciato (12s) · consigliato',
                   BufferProfile.stable => 'Massima stabilità (30s) · per Wi-Fi debole o server lenti',
-                }),
+                }) + (panel.imposed('p.buffer') ? ' · scelto dal fornitore' : '')),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -202,7 +202,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ButtonSegment(value: BufferProfile.stable, label: Text('Stabile'), icon: Icon(Icons.shield_rounded)),
                   ],
                   selected: {s.bufferProfile},
-                  onSelectionChanged: (v) => n.update((x) => x.copyWith(bufferProfile: v.first)),
+                  onSelectionChanged: panel.imposed('p.buffer') ? null : (v) => n.update((x) => x.copyWith(bufferProfile: v.first)),
                 ),
               ),
               SwitchListTile(
@@ -214,10 +214,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               SwitchListTile(
                 title: const Text('Modalità TV'),
-                subtitle: const Text('Interfaccia ottimizzata per telecomando'),
+                subtitle: Text('Interfaccia ottimizzata per telecomando${panel.imposed('tvmode') ? ' · scelta dal fornitore' : ''}'),
                 value: s.tvMode,
                 activeColor: KairosColors.cyan,
-                onChanged: (v) => n.update((x) => x.copyWith(tvMode: v)),
+                onChanged: panel.imposed('tvmode') ? null : (v) => n.update((x) => x.copyWith(tvMode: v)),
               ),
             ]),
           ),

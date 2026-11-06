@@ -52,6 +52,8 @@ class PanelService extends ChangeNotifier {
   int _updSeen = 0;
   Map<String, String> _rc = const {};
   String _rcv = '';
+  /// La voce è imposta dal fornitore nel pannello: nell'app si vede ma non si cambia.
+  bool imposed(String key) => (_rc[key] ?? '').isNotEmpty;
   Map<String, String> _map = const {}; // id lista del pannello → id lista in Nova
   Map<String, String> _sigs = const {}; // id lista del pannello → impronta importata
   int _seq = 0;
@@ -248,7 +250,13 @@ class PanelService extends ChangeNotifier {
     final watching = _ref.read(watchingProvider) > 0;
     final st = _ref.read(engineProvider).status.value;
     final title = watching && st.state == EngineState.playing ? (st.channel?.name ?? '') : '';
-    final j = await c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: {'bgupd': _ref.read(appUpdaterProvider).bgUpdate ? 'on' : 'off'}, rcv: _rcv);
+    final sett = _ref.read(settingsProvider);
+    final cfg = {
+      'bgupd': _ref.read(appUpdaterProvider).bgUpdate ? 'on' : 'off',
+      'p.buffer': switch (sett.bufferProfile) { BufferProfile.lowLatency => 'fast', BufferProfile.balanced => 'balanced', BufferProfile.stable => 'stable' },
+      'tvmode': sett.tvMode ? 'on' : 'off',
+    };
+    final j = await c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: cfg, rcv: _rcv);
     if (j == null) return;
     if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
     // «Disconnetti» dal pannello: si conferma e l'app si scollega
@@ -288,6 +296,8 @@ class PanelService extends ChangeNotifier {
     _prefs.setString('kx_rc', jsonEncode(next));
     _prefs.setString('kx_rcv', rcv);
     _ref.read(appUpdaterProvider).applyRemotePolicy({for (final k in ['bgupd', 'force']) if (next.containsKey(k)) k: next[k]!});
+    // buffer e modalità TV imposti dal fornitore: le Impostazioni li riapplicano sopra le scelte del cliente
+    Future.microtask(() { try { _ref.read(settingsProvider.notifier).remoteChanged(); } catch (_) {} });
     notifyListeners();
   }
 
