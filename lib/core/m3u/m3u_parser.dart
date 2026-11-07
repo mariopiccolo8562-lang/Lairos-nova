@@ -34,9 +34,15 @@ class M3uEntry {
 /// - Gestisce #EXTGRP, #EXTVLCOPT (header HTTP), #KODIPROP, catchup.
 /// - Classifica live / film / serie / radio da attributi e URL.
 class M3uStreamParser {
-  final _decoder = const Utf8Decoder(allowMalformed: true);
+  // Decodifica UTF-8 a pezzi: un carattere accentato spezzato fra due blocchi di rete resta intero (prima
+  // diventava «�», e il nome del canale, quindi anche la chiave dei preferiti, poteva cambiare a ogni import).
+  final _text = StringBuffer();
+  late ByteConversionSink _utf8 = _newDecoder();
   String _carry = '';
   bool _headerSeen = false;
+
+  /// Gruppi già classificati (serie / radio dal nome del gruppo): lo stesso gruppo si ripete per migliaia di voci.
+  final _groupKinds = <String, int>{};
 
   // Stato della voce in costruzione
   String? _name;
@@ -50,8 +56,18 @@ class M3uStreamParser {
 
   static final _attrRe = RegExp(r'([A-Za-z0-9\-_]+)=(?:"([^"]*)"|([^\s,]+))');
 
+  ByteConversionSink _newDecoder() =>
+      const Utf8Decoder(allowMalformed: true).startChunkedConversion(StringConversionSink.fromStringSink(_text));
+
+  String _takeText() {
+    final s = _text.toString();
+    _text.clear();
+    return s;
+  }
+
   Iterable<M3uEntry> feed(List<int> bytes) sync* {
-    final text = _carry + _decoder.convert(bytes);
+    _utf8.add(bytes);
+    final text = _carry + _takeText();
     final lastNl = text.lastIndexOf('\n');
     if (lastNl < 0) {
       _carry = text;
@@ -66,6 +82,10 @@ class M3uStreamParser {
   }
 
   Iterable<M3uEntry> flush() sync* {
+    // fine del flusso: un eventuale carattere rimasto a metà diventa «�» come prima; il parser resta riusabile
+    _utf8.close();
+    _carry += _takeText();
+    _utf8 = _newDecoder();
     if (_carry.isNotEmpty) {
       final e = _line(_carry);
       _carry = '';
@@ -204,14 +224,25 @@ class M3uStreamParser {
   static final _seriesRe = RegExp(r'\bS\d{1,2}\s?E\d{1,3}\b|/series/|\bseason\b|\bstagione\b', caseSensitive: false);
   static final _radioRe = RegExp(r'\bradio\b|\bfm\b|/radio/', caseSensitive: false);
 
-  static ChannelType _classify(String url, String group, String? hint) {
+  ChannelType _classify(String url, String group, String? hint) {
     if (hint == 'radio') return ChannelType.radio;
     if (hint == 'movie' || hint == 'vod') return ChannelType.movie;
     if (hint == 'series') return ChannelType.series;
-    if (_seriesRe.hasMatch(url) || _seriesRe.hasMatch(group)) return ChannelType.series;
+    final g = _groupKind(group);
+    if ((g & 1) != 0 || _seriesRe.hasMatch(url)) return ChannelType.series;
     if (url.contains('/movie/') || _movieExt.hasMatch(url)) return ChannelType.movie;
-    if (_radioRe.hasMatch(group)) return ChannelType.radio;
+    if ((g & 2) != 0) return ChannelType.radio;
     return ChannelType.live;
+  }
+
+  /// 1 = il nome del gruppo dice «serie», 2 = dice «radio» (stesse espressioni di prima, calcolate una volta).
+  int _groupKind(String group) {
+    final known = _groupKinds[group];
+    if (known != null) return known;
+    if (_groupKinds.length >= 20000) _groupKinds.clear();
+    final kind = (_seriesRe.hasMatch(group) ? 1 : 0) | (_radioRe.hasMatch(group) ? 2 : 0);
+    _groupKinds[group] = kind;
+    return kind;
   }
 
   void _reset() {
