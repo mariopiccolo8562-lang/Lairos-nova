@@ -75,7 +75,7 @@ enum BufferProfile { lowLatency, balanced, stable }
 /// Motore di riproduzione "antifragile" (Kairos Adaptive v1 su libmpv).
 ///
 /// Adattività:
-///  - ogni secondo misura cache-speed, buffer, stalli (paused-for-cache), bitrate, frame persi, hwdec, ttff
+///  - ogni secondo misura cache-speed, buffer, stalli (paused-for-cache), bitrate, frame persi, ttff (hwdec ogni 5 s)
 ///  - ogni 5 s classifica la linea (weak / normal / good) su una finestra di 60 s con isteresi:
 ///    si scende subito, si sale dopo 120 s puliti; la classe è salvata (kx_line) e vale 12 h
 ///  - per classe: cache/readahead, attesa di riempimento, tetti in byte, hls-bitrate, timeout, soglia watchdog
@@ -163,6 +163,9 @@ class StreamEngine {
   Timer? _watchdog;
   Timer? _healthTimer;
   bool _ticking = false;
+  int _tickN = 0;
+  String _codecRaw = ''; // ultimi video-codec / hwdec-current letti (si rileggono a ogni apertura)
+  String _hwdecRaw = '';
   Duration _lastPos = Duration.zero;
   Duration _resumePos = Duration.zero; // ultima posizione buona (VOD), sopravvive alle riaperture
   DateTime? _lastProgress;
@@ -437,6 +440,8 @@ class StreamEngine {
     _startedAt = null;
     _pfcPrev = false;
     _opening = true;
+    _codecRaw = '';
+    _hwdecRaw = '';
 
     final native = _player.platform;
     if (native is NativePlayer) {
@@ -620,8 +625,11 @@ class StreamEngine {
     _emit(_status.value.copyWith(health: _status.value.health.copyWith(message: _short(text))));
   }
 
+  static final _urlRe = RegExp(r'https?://\S+');
+  static final _spacesRe = RegExp(r'\s+');
+
   static String _short(String t) {
-    final s = t.replaceAll(RegExp(r'https?://\S+'), '…').replaceAll(RegExp(r'\s+'), ' ').trim();
+    final s = t.replaceAll(_urlRe, '…').replaceAll(_spacesRe, ' ').trim();
     return s.length > 90 ? '${s.substring(0, 90)}…' : s;
   }
 
@@ -681,8 +689,15 @@ class StreamEngine {
       final h = await prop('height');
       final fps = await prop('estimated-vf-fps');
       final drop = await prop('frame-drop-count');
-      final codec = await native.getProperty('video-codec');
-      final hwdec = await native.getProperty('hwdec-current');
+      // codec e decoder cambiano solo all'apertura (o se mpv ripiega sul software) e servono solo alla
+      // diagnostica: riletti ogni 5 s invece che ogni secondo (due chiamate sincrone a mpv in meno al secondo)
+      if (_codecRaw.isEmpty || _tickN % 5 == 0) {
+        _codecRaw = await native.getProperty('video-codec');
+        _hwdecRaw = await native.getProperty('hwdec-current');
+      }
+      _tickN++;
+      final codec = _codecRaw;
+      final hwdec = _hwdecRaw;
       if (_fmt.isEmpty) {
         final ff = await native.getProperty('file-format');
         if (ff.isNotEmpty) {
@@ -904,12 +919,16 @@ class StreamEngine {
     return _qualityKbps(ch.name);
   }
 
+  static final _q4kRe = RegExp(r'\b(4K|UHD|2160)');
+  static final _qFhdRe = RegExp(r'\b(FHD|1080)');
+  static final _qSdRe = RegExp(r'\b(SD|576|480)\b');
+
   /// Stima dal nome quando non c'è storia: 4K/UHD → FHD → HD → SD.
   static int _qualityKbps(String name) {
     final n = name.toUpperCase();
-    if (RegExp(r'\b(4K|UHD|2160)').hasMatch(n)) return 16000;
-    if (RegExp(r'\b(FHD|1080)').hasMatch(n)) return 8000;
-    if (RegExp(r'\b(SD|576|480)\b').hasMatch(n)) return 1500;
+    if (_q4kRe.hasMatch(n)) return 16000;
+    if (_qFhdRe.hasMatch(n)) return 8000;
+    if (_qSdRe.hasMatch(n)) return 1500;
     return 4000; // HD o ignoto
   }
 

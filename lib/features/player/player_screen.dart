@@ -18,6 +18,8 @@ import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../shared/widgets/widgets.dart';
 
+final RegExp _digitRe = RegExp(r'\d');
+
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({super.key, required this.channelId});
   final int channelId;
@@ -195,7 +197,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       return KeyEventResult.handled;
     }
     final label = k.keyLabel;
-    if (label.length == 1 && RegExp(r'\d').hasMatch(label)) {
+    if (label.length == 1 && _digitRe.hasMatch(label)) {
       _onDigit(label);
       return KeyEventResult.handled;
     }
