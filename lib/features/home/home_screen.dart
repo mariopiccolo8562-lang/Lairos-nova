@@ -24,7 +24,6 @@ class HomeScreen extends ConsumerWidget {
     final favs = ref.watch(favoritesProvider);
     final allLive = ref.watch(groupsProvider(ChannelType.live));
     final allMovies = ref.watch(groupsProvider(ChannelType.movie));
-    final total = ref.watch(totalCountProvider);
     // Home decisa dal pannello: gruppi in primo piano (home.top) e nascosti (home.hide); senza regole come sempre
     final rules = ref.watch(homeRulesProvider);
     final chosen = rules.top.isEmpty
@@ -50,7 +49,6 @@ class HomeScreen extends ConsumerWidget {
         SliverToBoxAdapter(
           child: _Hero(
             channel: hero,
-            total: total,
             playlistName: playlists.where((p) => p.id == active).firstOrNull?.name,
             wide: wide,
           ),
@@ -98,15 +96,16 @@ String _base(ChannelType? type) => switch (type) {
     };
 
 class _Hero extends ConsumerWidget {
-  const _Hero({this.channel, required this.total, this.playlistName, required this.wide});
+  const _Hero({this.channel, this.playlistName, required this.wide});
   final Channel? channel;
-  final int total;
   final String? playlistName;
   final bool wide;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nn = channel == null ? const NowNext() : ref.watch(nowNextProvider(channel!.tvgId));
+    // il totale (COUNT su centinaia di migliaia di righe) serve solo al benvenuto, senza un titolo da riprendere
+    final total = channel == null ? ref.watch(totalCountProvider) : 0;
     final now = DateTime.now();
     return Container(
       height: wide ? 360 : 300,

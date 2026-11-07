@@ -161,8 +161,12 @@ class SettingsNotifier extends Notifier<Settings> {
   /// Il pannello ha cambiato le voci imposte: si riapplicano sopra le scelte del cliente.
   void remoteChanged() {
     state = _imposed(_own(ref.read(prefsProvider)));
-    ref.read(engineProvider).setProfile(state.bufferProfile);
+    _applyProfile();
   }
+
+  /// Profilo buffer al lettore, se esiste già: crearne uno (libmpv) solo per questo all'avvio o dalle Impostazioni
+  /// costa memoria e tempo; quando il lettore nasce legge da sé il profilo attuale.
+  void _applyProfile() => StreamEngine.active?.setProfile(state.bufferProfile);
 
   void update(Settings Function(Settings) fn) {
     final p = ref.read(prefsProvider);
@@ -180,7 +184,7 @@ class SettingsNotifier extends Notifier<Settings> {
     p.setBool('parental_on', own.parentalOn);
     p.setInt('pin_later', own.pinLater);
     state = _imposed(own);
-    ref.read(engineProvider).setProfile(state.bufferProfile);
+    _applyProfile();
   }
 }
 

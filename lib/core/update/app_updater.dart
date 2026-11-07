@@ -56,8 +56,17 @@ class NovaNative {
     }
   }
 
-  /// {version, versionCode, sdk, model, tv}; vuoto fuori da Android.
-  static Future<Map<String, dynamic>> deviceInfo() => _call('deviceInfo');
+  static Map<String, dynamic>? _info;
+
+  /// {version, versionCode, sdk, model, tv, lowRam, totalMemMb}; vuoto fuori da Android. Non cambia mentre l'app è
+  /// aperta: si chiede alla parte nativa una volta sola (all'avvio), le richieste dopo il primo fotogramma la riusano.
+  static Future<Map<String, dynamic>> deviceInfo() async {
+    final known = _info;
+    if (known != null) return known;
+    final r = await _call('deviceInfo');
+    if (r.isNotEmpty) _info = r;
+    return r;
+  }
   static Future<Map<String, dynamic>> updateStatus(int code) => _call('updateStatus', {'code': code});
   static Future<void> updatePrefetch(String url, int code) => _call('updatePrefetch', {'url': url, 'code': code});
   static Future<void> updateInstall(String url, int code) => _call('updateInstall', {'url': url, 'code': code});

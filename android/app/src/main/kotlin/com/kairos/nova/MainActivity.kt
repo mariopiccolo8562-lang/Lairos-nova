@@ -1,5 +1,7 @@
 package com.kairos.nova
 
+import android.app.ActivityManager
+import android.content.Context
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -7,7 +9,7 @@ import io.flutter.plugin.common.MethodChannel
 
 /**
  * Parte nativa di Kairos Nova: un solo canale («kairos/nova») per le cose che Flutter non può fare da solo.
- * - deviceInfo: versione e numero di build installati
+ * - deviceInfo: versione e numero di build installati, modello, memoria del dispositivo
  * - updateStatus / updatePrefetch / updateInstall: aggiornamento dell'app (vedi Updater.kt);
  *   gli esiti arrivano a Flutter con updateEvent
  */
@@ -34,12 +36,18 @@ class MainActivity : FlutterActivity() {
                     val pi = try { packageManager.getPackageInfo(packageName, 0) } catch (_: Exception) { null }
                     @Suppress("DEPRECATION")
                     val code = if (pi == null) 0 else (if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()).toInt()
+                    // memoria del dispositivo: classe D (≤ 1,2 GB) per la grafica e le cache delle immagini
+                    val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                    val mi = ActivityManager.MemoryInfo()
+                    try { am?.getMemoryInfo(mi) } catch (_: Exception) {}
                     result.success(mapOf(
                         "version" to (pi?.versionName ?: ""),
                         "versionCode" to code,
                         "sdk" to Build.VERSION.SDK_INT,
                         "model" to (Build.MODEL ?: ""),
                         "tv" to packageManager.hasSystemFeature("android.software.leanback"),
+                        "lowRam" to (am?.isLowRamDevice ?: false),
+                        "totalMemMb" to (mi.totalMem / (1024L * 1024L)).toInt(),
                     ))
                 }
                 "updateStatus" -> result.success(Updater.status(this, (call.argument<Number>("code") ?: 0).toInt()))
