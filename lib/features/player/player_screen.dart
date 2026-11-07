@@ -140,8 +140,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     Future.microtask(() => watching.state--);
     final st = _engine.status.value;
     if (_channel != null && !st.isLive && st.state != EngineState.idle) {
-      ref.read(dbProvider).recordPlay(_channel!,
-          positionMs: st.position.inMilliseconds, durationMs: st.duration.inMilliseconds);
+      try {
+        ref.read(dbProvider).recordPlay(_channel!,
+            positionMs: st.position.inMilliseconds, durationMs: st.duration.inMilliseconds);
+      } catch (_) {
+        // database occupato da un import: la posizione non si salva, ma il lettore si chiude comunque (sotto)
+      }
       final pv = ref.read(playVersionProvider.notifier); // «Continua a guardare» aggiornato una volta, alla chiusura
       Future.microtask(() => pv.state++);
     }

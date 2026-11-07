@@ -318,10 +318,21 @@ class PagedChannels extends ChangeNotifier {
   }
 }
 
+/// Si libera quando nessuna schermata lo usa più: prima ogni gruppo aperto (Live, Film, Serie, Guida, lista nel
+/// lettore) restava in memoria con le sue pagine (fino a 2.000 canali, ~1 MB) fino al prossimo import.
 final pagedChannelsProvider =
-    ChangeNotifierProvider.family<PagedChannels, ChannelQuery>((ref, q) {
+    ChangeNotifierProvider.autoDispose.family<PagedChannels, ChannelQuery>((ref, q) {
   ref.watch(dataVersionProvider);
   return PagedChannels(ref.watch(dbProvider), q);
+});
+
+/// Prime 20 voci di un gruppo per le righe della Home: lette una volta e non a ogni ricostruzione della Home (che
+/// avviene anche sotto il lettore, a ogni canale che parte). Si rileggono dopo un import o un cambio di preferiti.
+final groupPreviewProvider = Provider.autoDispose.family<List<Channel>, ChannelQuery>((ref, q) {
+  ref.watch(dataVersionProvider);
+  ref.watch(favVersionProvider); // il cuore dei preferiti sulle card
+  return ref.watch(dbProvider).channelsPage(
+      playlistId: q.playlistId, type: q.type, group: q.group, offset: 0, limit: 20);
 });
 
 final favoritesProvider = Provider<List<Channel>>((ref) {
@@ -387,7 +398,11 @@ class Actions {
   }
 
   void toggleFavorite(Channel c) {
-    ref.read(dbProvider).toggleFavorite(c);
+    try {
+      ref.read(dbProvider).toggleFavorite(c);
+    } catch (_) {
+      return; // database occupato da un import: il cuore resta com'era (si riprova)
+    }
     ref.read(favVersionProvider.notifier).state++;
   }
 

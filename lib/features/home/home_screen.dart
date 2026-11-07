@@ -220,8 +220,7 @@ class _GroupPreview extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final items = ref.watch(dbProvider).channelsPage(
-        playlistId: playlistId, type: group.type, group: group.name, offset: 0, limit: 20);
+    final items = ref.watch(groupPreviewProvider(ChannelQuery(type: group.type, group: group.name, playlistId: playlistId)));
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: SizedBox(

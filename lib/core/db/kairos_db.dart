@@ -25,7 +25,10 @@ class KairosDb {
     final file = File(p.join(dir.path, 'kairos_nova.db'));
     final db = sqlite3.open(file.path);
     final kdb = KairosDb._(db);
-    kdb._configure();
+    // connessione dell'interfaccia: attesa breve se un import (lista o guida TV, in un isolate) tiene il database
+    // in scrittura, cosa che può durare minuti. Con 5 s ogni scrittura di contorno (cronologia, statistiche dei
+    // link, preferiti) bloccava l'interfaccia per 5 s e poi falliva comunque; ora rinuncia dopo 250 ms.
+    kdb._configure(busyMs: 250);
     kdb._migrate();
     return _instance = kdb;
   }
@@ -41,15 +44,15 @@ class KairosDb {
 
   String get path => _db.select('PRAGMA database_list').first['file'] as String;
 
-  void _configure() {
+  void _configure({int busyMs = 5000}) {
     _db.execute('PRAGMA journal_mode = WAL');
     _db.execute('PRAGMA synchronous = NORMAL');
     _db.execute('PRAGMA temp_store = MEMORY');
     _db.execute('PRAGMA cache_size = -32768'); // 32 MB
     _db.execute('PRAGMA mmap_size = 268435456'); // 256 MB
     _db.execute('PRAGMA foreign_keys = ON');
-    // Scritture concorrenti (import in isolate + UI): attesa fino a 5 s invece di SQLITE_BUSY immediato.
-    _db.execute('PRAGMA busy_timeout = 5000');
+    // Scritture concorrenti (import in isolate + UI): attesa (5 s negli isolate) invece di SQLITE_BUSY immediato.
+    _db.execute('PRAGMA busy_timeout = $busyMs');
   }
 
   void _migrate() {
@@ -392,13 +395,31 @@ class KairosDb {
     return !exists;
   }
 
+  /// Canali preferiti, dal più recente. Prima era un JOIN su `lower(nome)|url`: nessun indice possibile, quindi
+  /// una scansione completa dei canali (centinaia di ms con 300k voci, anche senza preferiti) all'avvio della Home e
+  /// a ogni cuore. Ora per ogni preferito si cercano i canali con quel nome sull'indice (type, name NOCASE) e si
+  /// tiene chi ha la stessa chiave, confrontata da SQLite con la stessa espressione di prima: stesso risultato.
   List<Channel> favorites({int limit = 500}) {
-    final rows = _db.select(
-      'SELECT c.* FROM channels c JOIN favorites f ON f.channel_key = lower(c.name) || \'|\' || c.url '
-      'ORDER BY f.added_at DESC LIMIT ?',
-      [limit],
-    );
-    return rows.map((r) => _rowToChannel(r, _favoriteKeys())).toList();
+    final keys = _db.select('SELECT channel_key FROM favorites ORDER BY added_at DESC');
+    if (keys.isEmpty) return const [];
+    final favs = _favoriteKeys();
+    final out = <Channel>[];
+    for (final k in keys) {
+      final key = k['channel_key'] as String;
+      // la chiave è «nome in minuscolo|url»: il nome finisce a uno dei «|» (può contenerne anche lui)
+      for (var cut = key.indexOf('|'); cut >= 0; cut = key.indexOf('|', cut + 1)) {
+        final rows = _db.select(
+          'SELECT * FROM channels WHERE type IN (0, 1, 2, 3) AND name = ? COLLATE NOCASE '
+          "AND lower(name) || '|' || url = ? ORDER BY id",
+          [key.substring(0, cut), key],
+        );
+        for (final r in rows) {
+          out.add(_rowToChannel(r, favs));
+          if (out.length >= limit) return out;
+        }
+      }
+    }
+    return out;
   }
 
   // ---------------------------------------------------------------- Cronologia
