@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -95,8 +94,9 @@ class _DownloadTile extends StatelessWidget {
               child: SizedBox(
                 width: 54, height: 76,
                 child: d.logo != null && d.logo!.startsWith('http')
-                    ? CachedNetworkImage(imageUrl: d.logo!, fit: BoxFit.cover,
-                        errorWidget: (_, __, ___) => Container(color: KairosColors.surfaceHi))
+                    // locandina decodificata alla misura del riquadro (54 px), non all'originale
+                    ? NetImage(d.logo!, fit: BoxFit.cover, decodeWidth: 108,
+                        error: (_) => Container(color: KairosColors.surfaceHi))
                     : Container(color: KairosColors.surfaceHi, child: const Icon(Icons.movie_outlined)),
               ),
             ),

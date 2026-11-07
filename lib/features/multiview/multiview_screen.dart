@@ -29,6 +29,8 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
     final watching = ref.read(watchingProvider.notifier); // niente aggiornamenti in background durante la visione
     Future.microtask(() => watching.state++);
     super.initState();
+    // più lettori insieme: via dalla memoria le immagini decodificate che nessuna schermata mostra
+    PaintingBinding.instance.imageCache.clear();
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final add = GoRouterState.of(context).uri.queryParameters['add'];

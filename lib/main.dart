@@ -37,9 +37,11 @@ Future<void> main() async {
   // classe del dispositivo (D = debole) prima del primo fotogramma: grafica e cache si regolano da subito
   DeviceTier.init(boot[2]);
 
-  // Cache immagini: migliaia di loghi senza saturare la RAM.
-  PaintingBinding.instance.imageCache.maximumSize = 600;
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 80 * 1024 * 1024;
+  // Cache immagini in memoria (già decodificate): migliaia di loghi senza saturare la RAM. Tetto per classe: sui
+  // dispositivi deboli (1 GB) ~1/8 della memoria dell'app, 24 MB; sugli altri come sempre. Con poca memoria il
+  // sistema avvisa (onTrimMemory/onLowMemory) e Flutter svuota da sé questa cache.
+  PaintingBinding.instance.imageCache.maximumSize = DeviceTier.weak ? 300 : 600;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = (DeviceTier.weak ? 24 : 80) * 1024 * 1024;
 
   runApp(ProviderScope(
     overrides: [

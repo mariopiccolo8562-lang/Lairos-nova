@@ -4,7 +4,9 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/device_tier.dart';
 import '../../core/download/download_manager.dart';
+import '../../core/images.dart';
 import '../../core/models/models.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
@@ -23,19 +25,68 @@ class ChannelLogo extends StatelessWidget {
     if (logo == null || logo.isEmpty || !logo.startsWith('http')) return fallback;
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: CachedNetworkImage(
-        imageUrl: logo,
+      child: NetImage(
+        logo,
         width: size,
         height: size,
         fit: BoxFit.contain,
-        memCacheWidth: (size * 2).round(),
-        fadeInDuration: const Duration(milliseconds: 150),
-        placeholder: (_, __) => Container(color: KairosColors.surfaceHi),
-        errorWidget: (_, __, ___) => fallback,
+        decodeWidth: (size * 2).round(),
+        fadeIn: const Duration(milliseconds: 150),
+        placeholder: (_) => Container(color: KairosColors.surfaceHi),
+        error: (_) => fallback,
       ),
     );
   }
 }
+
+/// Immagine di rete (loghi, locandine): cache su disco con tetto per classe ([NovaImageCache]), decodifica alla
+/// misura mostrata ([decodeWidth] = pixel reali, mai l'originale) e locandine TMDB scaricate alla misura che serve
+/// ([tmdbSized]); se quella misura non arriva si riprova una volta con il link originale, poi [error].
+/// Sui dispositivi deboli niente dissolvenze (ogni immagine in dissolvenza è un livello in più per la GPU).
+class NetImage extends StatelessWidget {
+  const NetImage(
+    this.url, {
+    super.key,
+    required this.decodeWidth,
+    required this.error,
+    this.width,
+    this.height,
+    this.fit,
+    this.fadeIn = const Duration(milliseconds: 500),
+    this.placeholder,
+  });
+
+  final String url;
+  final int decodeWidth;
+  final Widget Function(BuildContext context) error;
+  final double? width;
+  final double? height;
+  final BoxFit? fit;
+  final Duration fadeIn;
+  final Widget Function(BuildContext context)? placeholder;
+
+  @override
+  Widget build(BuildContext context) {
+    final sized = tmdbSized(url, decodeWidth, weak: DeviceTier.weak);
+    if (sized == url) return _image(url, error);
+    return _image(sized, (ctx) => _image(url, error));
+  }
+
+  Widget _image(String src, Widget Function(BuildContext context) onError) => CachedNetworkImage(
+        imageUrl: src,
+        cacheManager: NovaImageCache.instance,
+        width: width,
+        height: height,
+        fit: fit,
+        memCacheWidth: decodeWidth,
+        fadeInDuration: DeviceTier.weak ? Duration.zero : fadeIn,
+        fadeOutDuration: DeviceTier.weak ? Duration.zero : const Duration(milliseconds: 1000),
+        placeholder: placeholder == null ? null : (ctx, __) => placeholder!(ctx),
+        errorWidget: (ctx, __, ___) => onError(ctx),
+      );
+}
+
+final RegExp _notInitial = RegExp(r'[^A-Za-z0-9 ]');
 
 class _Monogram extends StatelessWidget {
   const _Monogram(this.name, {required this.size, required this.radius});
@@ -48,7 +99,7 @@ class _Monogram extends StatelessWidget {
     final hue = (name.hashCode % 360).toDouble();
     final c = HSLColor.fromAHSL(1, hue, 0.6, 0.45).toColor();
     final initials = name
-        .replaceAll(RegExp(r'[^A-Za-z0-9 ]'), '')
+        .replaceAll(_notInitial, '')
         .trim()
         .split(' ')
         .where((w) => w.isNotEmpty)
@@ -188,11 +239,11 @@ class ChannelCard extends ConsumerWidget {
                 clipBehavior: Clip.antiAlias,
                 child: Stack(fit: StackFit.expand, children: [
                   if (channel.logo != null && channel.logo!.startsWith('http'))
-                    CachedNetworkImage(
-                      imageUrl: channel.logo!,
+                    NetImage(
+                      channel.logo!,
                       fit: isPoster ? BoxFit.cover : BoxFit.contain,
-                      memCacheWidth: (width * 2).round(),
-                      errorWidget: (_, __, ___) => Center(child: ChannelLogo(channel, size: 56)),
+                      decodeWidth: (width * 2).round(),
+                      error: (_) => Center(child: ChannelLogo(channel, size: 56)),
                     )
                   else
                     Center(child: ChannelLogo(channel, size: 56)),

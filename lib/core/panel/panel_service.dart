@@ -5,10 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../images.dart';
 import '../models/models.dart';
 import '../player/stream_engine.dart';
 import '../providers.dart';
@@ -514,7 +514,7 @@ class PanelService extends ChangeNotifier {
             PaintingBinding.instance.imageCache.clear();
             PaintingBinding.instance.imageCache.clearLiveImages();
             try {
-              await DefaultCacheManager().emptyCache();
+              await NovaImageCache.instance.emptyCache(); // la cache su disco delle immagini (la stessa di prima)
             } catch (_) {}
             final info = await resync();
             await c.cmdAck(id, true, 'cache svuotata, $info');
