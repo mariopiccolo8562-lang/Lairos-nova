@@ -447,9 +447,13 @@ class EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 64, color: KairosColors.textMute)
-              .animate(onPlay: (c) => c.repeat(reverse: true))
-              .scaleXY(end: 1.08, duration: 1800.ms),
+          // sui dispositivi deboli l'icona resta ferma: niente fotogrammi continui per un effetto (es. Cerca vuota)
+          if (DeviceTier.weak)
+            Icon(icon, size: 64, color: KairosColors.textMute)
+          else
+            Icon(icon, size: 64, color: KairosColors.textMute)
+                .animate(onPlay: (c) => c.repeat(reverse: true))
+                .scaleXY(end: 1.08, duration: 1800.ms),
           const SizedBox(height: 16),
           Text(title, style: Theme.of(context).textTheme.titleLarge),
           if (subtitle != null) ...[

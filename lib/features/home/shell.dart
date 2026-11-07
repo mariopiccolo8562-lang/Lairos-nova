@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/device_tier.dart';
 import '../../core/panel/panel_service.dart';
 import '../../core/parental.dart';
 import '../../core/providers.dart';
@@ -129,29 +130,34 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
         else
           child,
       ]),
-      bottomNavigationBar: wide
-          ? null
-          : ClipRect(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: NavigationBar(
-                  height: 66,
-                  backgroundColor: KairosColors.bg.withOpacity(0.75),
-                  indicatorColor: KairosColors.cyan.withOpacity(0.18),
-                  selectedIndex: idx,
-                  labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
-                  onDestinationSelected: (i) => context.go(_dests[i].path),
-                  destinations: [
-                    for (final d in _dests)
-                      NavigationDestination(
-                        icon: Icon(d.icon, color: KairosColors.textDim),
-                        selectedIcon: Icon(d.selectedIcon, color: KairosColors.cyan),
-                        label: d.label,
-                      ),
-                  ],
-                ),
-              ),
-            ),
+      bottomNavigationBar: wide ? null : _bottomBar(context, idx),
+    );
+  }
+
+  Widget _bottomBar(BuildContext context, int idx) {
+    final bar = NavigationBar(
+      height: 66,
+      backgroundColor: KairosColors.bg.withOpacity(0.75),
+      indicatorColor: KairosColors.cyan.withOpacity(0.18),
+      selectedIndex: idx,
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+      onDestinationSelected: (i) => context.go(_dests[i].path),
+      destinations: [
+        for (final d in _dests)
+          NavigationDestination(
+            icon: Icon(d.icon, color: KairosColors.textDim),
+            selectedIcon: Icon(d.selectedIcon, color: KairosColors.cyan),
+            label: d.label,
+          ),
+      ],
+    );
+    // dispositivi deboli: niente sfocatura (dietro la barra c'è solo lo sfondo uniforme della pagina)
+    if (DeviceTier.weak) return bar;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: bar,
+      ),
     );
   }
 }
@@ -242,23 +248,37 @@ class _AmbientBackground extends StatefulWidget {
 
 class _AmbientBackgroundState extends State<_AmbientBackground>
     with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: const Duration(seconds: 14))
-    ..repeat(reverse: true);
+  /// Sui dispositivi deboli gli aloni restano fermi: niente ridisegno a tutto schermo 60 volte al secondo.
+  AnimationController? _c;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!DeviceTier.weak) {
+      _c = AnimationController(vsync: this, duration: const Duration(seconds: 14))..repeat(reverse: true);
+    }
+  }
 
   @override
   void dispose() {
-    _c.dispose();
+    _c?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) => CustomPaint(
-        size: Size.infinite,
-        painter: _AmbientPainter(_c.value),
-      ),
+    final c = _c;
+    // livello a parte: lo sfondo che si muove non obbliga a ridisegnare a ogni fotogramma tutta la pagina sopra
+    return RepaintBoundary(
+      child: c == null
+          ? CustomPaint(size: Size.infinite, painter: _AmbientPainter(0.0))
+          : AnimatedBuilder(
+              animation: c,
+              builder: (_, __) => CustomPaint(
+                size: Size.infinite,
+                painter: _AmbientPainter(c.value),
+              ),
+            ),
     );
   }
 }

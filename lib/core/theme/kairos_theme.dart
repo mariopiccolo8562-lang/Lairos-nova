@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../device_tier.dart';
+
 /// Palette "Kairos Nova": nero profondo, ciano elettrico, viola plasma.
 /// Pensata per OLED (neri veri = risparmio energia + contrasto) e per TV a 3 metri.
 class KairosColors {
@@ -128,6 +130,8 @@ class KairosTheme {
 }
 
 /// Pannello "vetro": blur + bordo luminoso. Usato ovunque per il look futuristico.
+/// Sui dispositivi deboli (classe D) niente sfocatura dello sfondo: è un passaggio in più della GPU a ogni
+/// fotogramma, anche sopra il video (lista canali, attesa, diagnostica); il pannello resta uguale, un po' più coprente.
 class GlassPanel extends StatelessWidget {
   const GlassPanel({
     super.key,
@@ -146,33 +150,37 @@ class GlassPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final weak = DeviceTier.weak;
+    final panel = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: KairosColors.surface.withOpacity(weak && opacity < 0.8 ? 0.8 : opacity),
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(
+          color: glow
+              ? KairosColors.cyan.withOpacity(0.6)
+              : KairosColors.line,
+        ),
+        boxShadow: glow
+            ? [
+                BoxShadow(
+                  color: KairosColors.cyan.withOpacity(0.25),
+                  blurRadius: 28,
+                  spreadRadius: -4,
+                )
+              ]
+            : null,
+      ),
+      child: child,
+    );
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: KairosColors.surface.withOpacity(opacity),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(
-              color: glow
-                  ? KairosColors.cyan.withOpacity(0.6)
-                  : KairosColors.line,
+      child: weak
+          ? panel
+          : BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: panel,
             ),
-            boxShadow: glow
-                ? [
-                    BoxShadow(
-                      color: KairosColors.cyan.withOpacity(0.25),
-                      blurRadius: 28,
-                      spreadRadius: -4,
-                    )
-                  ]
-                : null,
-          ),
-          child: child,
-        ),
-      ),
     );
   }
 }
