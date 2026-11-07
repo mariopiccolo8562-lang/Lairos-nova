@@ -60,6 +60,12 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onPause() {
+        // l'app si chiude (Indietro dalla Home, «Chiudi l'app»): il pannello la vede subito non in linea
+        if (isFinishing) PanelBye.send(applicationContext)
+        super.onPause()
+    }
+
     override fun onDestroy() {
         if (channel != null) channel = null
         super.onDestroy()

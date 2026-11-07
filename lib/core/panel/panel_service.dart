@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,7 +24,8 @@ class UiCommand {
 
 /// Collegamento facoltativo al fornitore (pannello Kairos Control), come le altre app Kairos.
 /// - Il cliente comunica il codice KX..-.... al fornitore; appena lo attiva, le sue liste arrivano da sole.
-/// - Battito ogni minuto («Online ora», impostazioni imposte, comandi, «Invia aggiornamento»).
+/// - Battito ogni minuto («Online ora», impostazioni imposte, comandi, «Invia aggiornamento»), solo con l'app
+///   visibile: ogni battito porta vis:true; quando l'app va in sfondo parte un solo battito vis:false.
 /// - Senza collegamento l'app resta libera: liste proprie, aggiornamenti dal feed pubblico.
 class PanelService extends ChangeNotifier {
   PanelService(this._ref, this._prefs) {
@@ -35,10 +37,21 @@ class PanelService extends ChangeNotifier {
     _rcv = _prefs.getString('kx_rcv') ?? '';
     _map = _decode(_prefs.getString('kx_pl_map'));
     _sigs = _decode(_prefs.getString('kx_pl_sig'));
+    _perms = PanelState.parsePerms(_prefs.getString('kx_perms'));
     // a lettore chiuso ripartono i lavori rimandati durante la visione (liste, refresh)
     _ref.listen<int>(watchingProvider, (_, n) {
       if (n == 0) unawaited(_runDeferred());
     });
+    // presenza: «in sfondo» quando nessuna schermata dell'app è visibile (hidden / paused / detached)
+    final now = WidgetsBinding.instance.lifecycleState;
+    _visible = now == null || now == AppLifecycleState.resumed || now == AppLifecycleState.inactive;
+    _life = AppLifecycleListener(
+      onShow: () => _setVisible(true),
+      onResume: () => _setVisible(true),
+      onHide: () => _setVisible(false),
+      onPause: () => _setVisible(false),
+      onDetach: () => _setVisible(false),
+    );
   }
 
   final Ref _ref;
@@ -54,6 +67,19 @@ class PanelService extends ChangeNotifier {
   Timer? _refresh;
   int _kickSeen = 0;
   int _updSeen = 0;
+  // presenza (vis): app visibile, battito in viaggio, «vado in sfondo» in viaggio, nuovo tentativo al ritorno
+  AppLifecycleListener? _life;
+  bool _visible = true;
+  bool _beating = false;
+  bool _disposed = false;
+  Future<void>? _beatCall;
+  Future<void>? _byeCall;
+  int _byeSeq = 0;
+  Timer? _resumeTimer;
+  final Stopwatch _clock = Stopwatch()..start();
+  int _lastOk = -1; // ultimo battito accettato dal pannello (ms di _clock): vale per il limite dei 15 s
+  /// Permessi del cliente dal pannello (chiave assente = consentito), salvati in `kx_perms`.
+  Map<String, bool> _perms = const {};
   /// Lavori rimandati perché c'era un lettore aperto (§7: niente download di liste durante la visione).
   List<PanelPlaylist>? _pendingPlaylists;
   bool _pendingRefresh = false;
@@ -65,6 +91,9 @@ class PanelService extends ChangeNotifier {
   String _rcv = '';
   /// La voce è imposta dal fornitore nel pannello: nell'app si vede ma non si cambia.
   bool imposed(String key) => (_rc[key] ?? '').isNotEmpty;
+
+  /// Funzione consentita dal fornitore (permessi del cliente; senza collegamento o chiave assente = sì).
+  bool perm(String key) => !linked || _perms[key] != false;
   Map<String, String> _map = const {}; // id lista del pannello → id lista in Nova
   Map<String, String> _sigs = const {}; // id lista del pannello → impronta importata
   int _seq = 0;
@@ -92,8 +121,7 @@ class PanelService extends ChangeNotifier {
     if (!linked) return;
     _client = _mkClient();
     unawaited(refresh());
-    _beat?.cancel();
-    _beat = Timer.periodic(const Duration(seconds: 60), (_) => unawaited(heartbeat()));
+    _startBeat();
     _refresh?.cancel();
     _refresh = Timer.periodic(const Duration(hours: 6), (_) {
       // con un lettore aperto il refresh si rinvia alla chiusura
@@ -125,9 +153,58 @@ class PanelService extends ChangeNotifier {
         },
       );
 
-  /// L'app torna in primo piano: battito subito.
-  void onForeground() {
-    if (linked && active) unawaited(heartbeat());
+  /// L'app torna in primo piano: battito subito (se il ciclo di vita non l'ha già fatto).
+  void onForeground() => _setVisible(true);
+
+  /// Battito periodico: ogni minuto, solo se collegata e con l'app visibile.
+  void _startBeat() {
+    _beat?.cancel();
+    _beat = linked && _visible && !_disposed ? Timer.periodic(const Duration(seconds: 60), (_) => unawaited(heartbeat())) : null;
+  }
+
+  /// L'app è andata in sfondo o è tornata visibile: lo si dice subito al pannello.
+  void _setVisible(bool visible) {
+    if (visible == _visible || _disposed) return;
+    _visible = visible;
+    _resumeTimer?.cancel();
+    _resumeTimer = null;
+    if (visible) {
+      _startBeat();
+      unawaited(_resumeBeat());
+    } else {
+      _beat?.cancel();
+      _beat = null;
+      final seq = ++_byeSeq;
+      _byeCall = _sendBye(_byeCall).whenComplete(() {
+        if (seq == _byeSeq) _byeCall = null;
+      });
+    }
+  }
+
+  /// Di nuovo visibile: battito subito (vis:true). Se il pannello chiede di aspettare (15 s dall'ultimo battito
+  /// vero, HTTP 429 «wait») si riprova dopo l'attesa; senza rete o con un battito già in viaggio, tra poco.
+  Future<void> _resumeBeat([int round = 0]) async {
+    _resumeTimer?.cancel();
+    _resumeTimer = null;
+    if (!_visible || _disposed) return;
+    final wait = await heartbeat();
+    if (wait == 0 || !_visible || _disposed || round >= 4) return;
+    _resumeTimer = Timer(Duration(milliseconds: wait > 0 ? wait + 500 : 3000), () => unawaited(_resumeBeat(round + 1)));
+  }
+
+  /// Un solo battito «vado in sfondo» (vis:false, idle) con gli stessi campi di sempre, dopo quelli ancora in viaggio.
+  /// Non aggiorna l'istante dell'ultimo battito: al ritorno in primo piano il battito parte subito.
+  Future<void> _sendBye(Future<void>? before) async {
+    try {
+      if (before != null) await before;
+      final regular = _beatCall;
+      if (regular != null) await regular;
+      final c = _client;
+      if (_visible || c == null || state == null || !state!.active) return;
+      await c.heartbeat(state: 'idle', screen: 'home', kickAck: _kickSeen, cfg: _cfg(), stats: {'dev': _dev}, rcv: _rcv, vis: false);
+    } catch (_) {
+      // senza rete il pannello la vedrà comunque non in linea dopo qualche minuto
+    }
   }
 
   // ------------------------------------------------------------------ collegamento
@@ -140,7 +217,7 @@ class PanelService extends ChangeNotifier {
       await _prefs.setString('kx_secret', _identity!.secret);
     }
     _client = _mkClient();
-    _beat ??= Timer.periodic(const Duration(seconds: 60), (_) => unawaited(heartbeat()));
+    if (_beat == null) _startBeat();
     notifyListeners();
     await refresh();
     _poll?.cancel();
@@ -162,6 +239,7 @@ class PanelService extends ChangeNotifier {
       final s = await c.register();
       state = s;
       lastError = null;
+      if (s.active) _applyPerms(s.perms);
       if (s.raw.containsKey('rc')) _applyRc(s.raw['rc'], (s.raw['rcv'] ?? '').toString());
       if (s.active) {
         if (_watching) {
@@ -193,9 +271,10 @@ class PanelService extends ChangeNotifier {
     state = null;
     _rc = const {};
     _rcv = '';
+    _perms = const {};
     _map = const {};
     _sigs = const {};
-    for (final k in ['kx_code', 'kx_secret', 'kx_rc', 'kx_rcv', 'kx_pl_map', 'kx_pl_sig']) {
+    for (final k in ['kx_code', 'kx_secret', 'kx_rc', 'kx_rcv', 'kx_pl_map', 'kx_pl_sig', 'kx_perms']) {
       await _prefs.remove(k);
     }
     _ref.read(appUpdaterProvider).applyRemotePolicy(const {});
@@ -308,54 +387,100 @@ class PanelService extends ChangeNotifier {
 
   // ------------------------------------------------------------------ battito e controllo remoto
 
-  Future<void> heartbeat() async {
-    final c = _client;
-    if (c == null || state == null || !state!.active) return;
-    final watching = _watching;
-    // il motore si legge solo se esiste già: il battito non deve crearne uno (libmpv) a vuoto
-    final engine = StreamEngine.active;
-    final st = engine?.status.value;
-    final playing = st != null && (st.state == EngineState.playing || st.state == EngineState.buffering);
-    final title = watching && playing ? (st?.channel?.name ?? '') : '';
+  /// Impostazioni attuali dell'app riportate al pannello (controllo remoto).
+  Map<String, Object?> _cfg() {
     final sett = _ref.read(settingsProvider);
-    final cfg = {
+    return {
       'bgupd': _ref.read(appUpdaterProvider).bgUpdate ? 'on' : 'off',
       'p.buffer': switch (sett.bufferProfile) { BufferProfile.lowLatency => 'fast', BufferProfile.balanced => 'balanced', BufferProfile.stable => 'stable' },
       'tvmode': sett.tvMode ? 'on' : 'off',
     };
-    // misure del lettore per «Online ora»: bw (Mbps), line, dev, stalls10, ttff, fmt, drop
-    final stats = <String, Object?>{
-      if (engine != null) ...engine.panelStats() else 'line': StreamEngine.savedLine(_prefs),
-      'dev': _dev,
-    };
-    final j = await c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: cfg, stats: stats, rcv: _rcv);
-    if (!watching) unawaited(_runDeferred());
-    if (j == null) return;
-    if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
-    // «Disconnetti» dal pannello: si conferma e l'app si scollega
-    final kick = (j['kick'] is num) ? (j['kick'] as num).toInt() : 0;
-    if (kick > 0 && kick != _kickSeen) {
-      _kickSeen = kick;
-      await c.heartbeat(state: 'idle', kickAck: kick, rcv: _rcv);
-      await unlink();
-      _emit('relink');
-      return;
-    }
-    // «Invia aggiornamento»
-    final upd = (j['upd'] is num) ? (j['upd'] as num).toInt() : 0;
-    if (upd > 0 && upd != _updSeen) {
-      _updSeen = upd;
-      unawaited(_ref.read(appUpdaterProvider).fromPanel());
-    }
-    // le liste sono cambiate nel pannello: ci si ripresenta
-    final pv = (j['pv'] ?? '').toString();
-    if (pv.isNotEmpty && pv != (_prefs.getString('kx_pv') ?? '')) {
-      await _prefs.setString('kx_pv', pv);
-      unawaited(refresh());
-    }
-    final cmds = j['cmds'];
-    if (cmds is List) await _run(cmds, c);
   }
+
+  /// Battito (vis:true), solo con l'app visibile. Restituisce 0 se è partito (o non serve), altrimenti i millisecondi
+  /// dopo cui riprovare (limite dei 15 s, HTTP 429 «wait») oppure -1 (rete, battito già in viaggio).
+  /// Solo un battito accettato conta come ultimo battito: uno fallito o rifiutato si riprova presto.
+  Future<int> heartbeat() async {
+    final c = _client;
+    if (c == null || state == null || !state!.active || !_visible || _disposed) return 0;
+    if (_beating) return -1;
+    final now = _clock.elapsedMilliseconds;
+    // il pannello accetta al massimo un battito ogni 15 s
+    if (_lastOk >= 0 && now - _lastOk < 15000) return 15000 - (now - _lastOk);
+    _beating = true;
+    try {
+      // il «vado in sfondo» ancora in viaggio deve arrivare prima di questo battito
+      final bye = _byeCall;
+      if (bye != null) {
+        await bye;
+        if (!_visible) return 0;
+      }
+      final watching = _watching;
+      // il motore si legge solo se esiste già: il battito non deve crearne uno (libmpv) a vuoto
+      final engine = StreamEngine.active;
+      final st = engine?.status.value;
+      final playing = st != null && (st.state == EngineState.playing || st.state == EngineState.buffering);
+      final title = watching && playing ? (st?.channel?.name ?? '') : '';
+      // misure del lettore per «Online ora»: bw (Mbps), line, dev, stalls10, ttff, fmt, drop
+      final stats = <String, Object?>{
+        if (engine != null) ...engine.panelStats() else 'line': StreamEngine.savedLine(_prefs),
+        'dev': _dev,
+      };
+      final sentAt = _clock.elapsedMilliseconds;
+      final call = c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
+      _beatCall = call;
+      final r = await call.whenComplete(() {
+        if (identical(_beatCall, call)) _beatCall = null;
+      });
+      if (!watching) unawaited(_runDeferred());
+      if (r.status == 429) {
+        final w = r.body?['wait'];
+        return w is num && w > 0 ? (w * 1000).round() : -1;
+      }
+      final j = r.status == 200 ? r.body : null;
+      if (j == null) return -1;
+      _lastOk = sentAt;
+      if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
+      // permessi spenti dal pannello (es. «risoluzione e FPS»): valgono subito, senza aspettare la riapertura
+      if (j.containsKey('ph')) _applyPerms(PanelState.parsePerms(j['ph']));
+      // «Disconnetti» dal pannello: si conferma e l'app si scollega
+      final kick = (j['kick'] is num) ? (j['kick'] as num).toInt() : 0;
+      if (kick > 0 && kick != _kickSeen) {
+        _kickSeen = kick;
+        await c.heartbeat(state: 'idle', kickAck: kick, rcv: _rcv);
+        await unlink();
+        _emit('relink');
+        return 0;
+      }
+      // «Invia aggiornamento»
+      final upd = (j['upd'] is num) ? (j['upd'] as num).toInt() : 0;
+      if (upd > 0 && upd != _updSeen) {
+        _updSeen = upd;
+        unawaited(_ref.read(appUpdaterProvider).fromPanel());
+      }
+      // le liste sono cambiate nel pannello: ci si ripresenta
+      final pv = (j['pv'] ?? '').toString();
+      if (pv.isNotEmpty && pv != (_prefs.getString('kx_pv') ?? '')) {
+        await _prefs.setString('kx_pv', pv);
+        unawaited(refresh());
+      }
+      final cmds = j['cmds'];
+      if (cmds is List) await _run(cmds, c);
+      return 0;
+    } finally {
+      _beating = false;
+    }
+  }
+
+  /// Permessi del cliente dal pannello (apertura o battito): si salvano e valgono subito.
+  void _applyPerms(Map<String, bool> next) {
+    if (_offKeys(next) == _offKeys(_perms)) return;
+    _perms = next;
+    _prefs.setString('kx_perms', jsonEncode(next));
+    notifyListeners();
+  }
+
+  static String _offKeys(Map<String, bool> m) => ([for (final e in m.entries) if (!e.value) e.key]..sort()).join(',');
 
   void _applyRc(Object? raw, String rcv) {
     Map<String, String> next = const {};
@@ -435,8 +560,11 @@ class PanelService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _life?.dispose();
     _poll?.cancel();
     _beat?.cancel();
+    _resumeTimer?.cancel();
     _refresh?.cancel();
     uiCommand.dispose();
     super.dispose();

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/home_rules.dart';
 import '../../core/models/models.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
@@ -53,7 +54,8 @@ class _GuideScreenState extends ConsumerState<GuideScreen> {
     final db = ref.watch(dbProvider);
     ref.watch(epgTickProvider);
     final pl = ref.watch(activePlaylistIdProvider);
-    final groups = ref.watch(groupsProvider(ChannelType.live));
+    // prima i gruppi in primo piano decisi dal pannello, in fondo quelli nascosti dalla Home
+    final groups = ref.watch(orderedGroupsProvider(ChannelType.live));
     final hoursSpan = 30;
     final to = _from.add(Duration(hours: hoursSpan));
     final gridW = hoursSpan * 60 * pxPerMinute;

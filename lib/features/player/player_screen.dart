@@ -11,6 +11,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/models/models.dart';
+import '../../core/panel/panel_service.dart';
 import '../../core/parental.dart';
 import '../../core/player/stream_engine.dart';
 import '../../core/providers.dart';
@@ -232,6 +233,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Widget build(BuildContext context) {
     final c = _channel;
     final settings = ref.watch(settingsProvider);
+    // permesso «resInd» del pannello: risoluzione e FPS (riquadro della diretta, indicatore e diagnostica)
+    final resInd = ref.watch(panelProvider.select((p) => p.perm('resInd')));
+    final live = c != null && c.type == ChannelType.live;
+    final topPad = MediaQuery.paddingOf(context).top;
     return Scaffold(
       backgroundColor: Colors.black,
       body: Focus(
@@ -299,7 +304,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                 ),
 
               // Overlay diagnostica
-              if (settings.showHealthOverlay || _showInfo)
+              if (resInd && (settings.showHealthOverlay || _showInfo))
                 Positioned(top: 24, left: 24, child: _HealthBadge(st.health, st)),
 
               // UI principale
@@ -321,6 +326,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                   ),
                 ),
               ),
+
+              // Qualità · risoluzione · FPS dei canali in diretta, in alto a destra sotto la barra (non prende il focus)
+              if (resInd && live)
+                Positioned(
+                  top: topPad + 64,
+                  right: 20,
+                  child: IgnorePointer(child: _ResBox(status: st, osd: _showUi, hidden: _numberBuffer.isNotEmpty)),
+                ),
             ]),
           ),
 
@@ -447,6 +460,7 @@ class _Overlay extends ConsumerWidget {
     final nn = ref.watch(nowNextProvider(c.tvgId));
     final now = DateTime.now();
     final pad = MediaQuery.paddingOf(context);
+    final resInd = ref.watch(panelProvider.select((p) => p.perm('resInd')));
 
     return Column(children: [
       // Top bar
@@ -468,7 +482,7 @@ class _Overlay extends ConsumerWidget {
                   style: const TextStyle(color: KairosColors.textDim, fontSize: 12)),
             ]),
           ),
-          _Badge(status.health.resolutionLabel, status.state == EngineState.playing ? KairosColors.lime : KairosColors.textDim),
+          if (resInd) _Badge(status.health.resolutionLabel, status.state == EngineState.playing ? KairosColors.lime : KairosColors.textDim),
           if (status.isLive) const _Badge('LIVE', KairosColors.red),
           IconButton(onPressed: () { ref.read(actionsProvider).toggleFavorite(c); onInteract(); },
               icon: Icon(c.isFavorite ? Icons.favorite : Icons.favorite_border, color: KairosColors.magenta)),
@@ -505,7 +519,7 @@ class _Overlay extends ConsumerWidget {
               if (c.type == ChannelType.movie || c.type == ChannelType.series)
                 const PopupMenuItem(value: 'download', child: ListTile(leading: Icon(Icons.download_rounded), title: Text('Scarica offline'))),
               const PopupMenuItem(value: 'multi', child: ListTile(leading: Icon(Icons.grid_view_rounded), title: Text('Multiview'))),
-              const PopupMenuItem(value: 'info', child: ListTile(leading: Icon(Icons.analytics_outlined), title: Text('Diagnostica'))),
+              if (resInd) const PopupMenuItem(value: 'info', child: ListTile(leading: Icon(Icons.analytics_outlined), title: Text('Diagnostica'))),
             ],
           ),
         ]),
@@ -631,6 +645,94 @@ class _Ctl extends StatelessWidget {
           ),
         ]),
       );
+}
+
+/// Riquadro «FHD · 1080p · 50 fps» per i canali in diretta: ~6 s dopo il primo fotogramma, ~4 s a ogni cambio di
+/// risoluzione (qualità adattiva) e sempre mentre è aperta la barra informazioni. FPS omessi se il motore non li dà.
+class _ResBox extends StatefulWidget {
+  const _ResBox({required this.status, required this.osd, required this.hidden});
+  final EngineStatus status;
+  final bool osd;
+  final bool hidden;
+
+  @override
+  State<_ResBox> createState() => _ResBoxState();
+}
+
+class _ResBoxState extends State<_ResBox> {
+  Timer? _timer;
+  bool _timed = false;
+  bool _started = false;
+  int _height = 0;
+  int? _channelId;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ResBox old) {
+    super.didUpdateWidget(old);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  /// Nuovo canale: si riparte; primo fotogramma: 6 s; risoluzione cambiata: 4 s.
+  void _check() {
+    final st = widget.status;
+    final id = st.channel?.id;
+    if (id != _channelId) {
+      _channelId = id;
+      _started = false;
+      _height = 0;
+      _show(null);
+    }
+    final h = st.health.height;
+    if (h <= 0) return;
+    if (!_started) {
+      if (st.state != EngineState.playing) return;
+      _started = true;
+      _height = h;
+      _show(const Duration(seconds: 6));
+    } else if (h != _height) {
+      _height = h;
+      _show(const Duration(seconds: 4));
+    }
+  }
+
+  void _show(Duration? d) {
+    _timer?.cancel();
+    _timer = null;
+    _timed = d != null;
+    if (d != null) {
+      _timer = Timer(d, () {
+        if (mounted) setState(() => _timed = false);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = widget.status;
+    final h = st.health.height;
+    final off = st.state == EngineState.failed || st.state == EngineState.ended || st.state == EngineState.idle;
+    if (widget.hidden || off || !_started || h <= 0 || !(widget.osd || _timed)) return const SizedBox.shrink();
+    final q = h >= 2000 ? '4K' : (h >= 1000 ? 'FHD' : (h >= 700 ? 'HD' : 'SD'));
+    final fps = st.health.fps;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(color: const Color(0xB3000000), borderRadius: BorderRadius.circular(6)),
+      child: Text(fps > 0 ? '$q · ${h}p · ${fps.round()} fps' : '$q · ${h}p',
+          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+    );
+  }
 }
 
 class _Badge extends StatelessWidget {

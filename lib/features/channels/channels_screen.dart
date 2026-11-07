@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/home_rules.dart';
 import '../../core/models/models.dart';
 import '../../core/parental.dart';
 import '../../core/providers.dart';
@@ -45,7 +46,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final groups = ref.watch(groupsProvider(widget.type));
+    // prima i gruppi in primo piano decisi dal pannello, in fondo quelli nascosti dalla Home
+    final groups = ref.watch(orderedGroupsProvider(widget.type));
     final wide = MediaQuery.sizeOf(context).width >= 760;
     final title = switch (widget.type) {
       ChannelType.live => 'Live TV',

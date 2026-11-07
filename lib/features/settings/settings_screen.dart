@@ -206,7 +206,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onSelectionChanged: panel.imposed('p.buffer') ? null : (v) => n.update((x) => x.copyWith(bufferProfile: v.first)),
                 ),
               ),
-              SwitchListTile(
+              // con il permesso «risoluzione e FPS» spento dal fornitore la diagnostica (risoluzione, FPS) non c'è
+              if (panel.perm('resInd')) SwitchListTile(
                 title: const Text('Overlay diagnostica'),
                 subtitle: const Text('Risoluzione, bitrate, buffer, frame persi'),
                 value: s.showHealthOverlay,

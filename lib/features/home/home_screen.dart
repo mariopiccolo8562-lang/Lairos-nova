@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/home_rules.dart';
 import '../../core/models/models.dart';
+import '../../core/parental.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../shared/widgets/widgets.dart';
@@ -20,10 +22,26 @@ class HomeScreen extends ConsumerWidget {
     // recentProvider cambia solo quando parte un canale (non a ogni tick del lettore); il COUNT è in un provider
     final recent = ref.watch(recentProvider);
     final favs = ref.watch(favoritesProvider);
-    final liveGroups = ref.watch(groupsProvider(ChannelType.live));
-    final movieGroups = ref.watch(groupsProvider(ChannelType.movie));
+    final allLive = ref.watch(groupsProvider(ChannelType.live));
+    final allMovies = ref.watch(groupsProvider(ChannelType.movie));
     final total = ref.watch(totalCountProvider);
-    final hero = recent.isNotEmpty ? recent.first : (favs.isNotEmpty ? favs.first : null);
+    // Home decisa dal pannello: gruppi in primo piano (home.top) e nascosti (home.hide); senza regole come sempre
+    final rules = ref.watch(homeRulesProvider);
+    final chosen = rules.top.isEmpty
+        ? const <ChannelGroup>[]
+        : rules.pickTop([allLive, allMovies, ref.watch(groupsProvider(ChannelType.series))]);
+    // controllo genitori: un gruppo per adulti ancora protetto non diventa una riga in primo piano
+    final parentalOn = ref.watch(settingsProvider.select((s) => s.parentalOn));
+    final unlocked = ref.watch(parentalUnlockedProvider);
+    final top = [for (final g in chosen) if (!(parentalOn && !unlocked && isAdultGroup(g.name))) g];
+    bool usual(ChannelGroup g) => !rules.hidden(g.name) && !chosen.contains(g);
+    // chip dei gruppi: niente nascosti, prima quelli in primo piano
+    final liveGroups = rules.order([for (final g in allLive) if (!rules.hidden(g.name)) g]);
+    final livePreview = allLive.where(usual).firstOrNull;
+    final moviePreview = allMovies.where(usual).firstOrNull;
+    // titolo in evidenza: mai un canale di un gruppo nascosto
+    final hero = recent.where((c) => !rules.hidden(c.groupName)).firstOrNull ??
+        favs.where((c) => !rules.hidden(c.groupName)).firstOrNull;
 
     final wide = MediaQuery.sizeOf(context).width >= 760;
 
@@ -41,6 +59,12 @@ class HomeScreen extends ConsumerWidget {
           const SliverToBoxAdapter(child: SectionHeader('Continua a guardare')),
           SliverToBoxAdapter(child: _Row(recent, height: 170)),
         ],
+        // gruppi in primo piano subito dopo «Continua a guardare», prima di tutte le altre righe
+        for (final g in top) ...[
+          SliverToBoxAdapter(
+              child: SectionHeader(g.name, action: 'Tutti', onAction: () => context.go('${_base(g.type)}?g=${Uri.encodeComponent(g.name)}'))),
+          SliverToBoxAdapter(child: _GroupPreview(g, active, poster: g.type == ChannelType.movie || g.type == ChannelType.series)),
+        ],
         if (favs.isNotEmpty) ...[
           SliverToBoxAdapter(
               child: SectionHeader('Preferiti',
@@ -52,19 +76,26 @@ class HomeScreen extends ConsumerWidget {
               child: SectionHeader('Canali TV',
                   action: '${liveGroups.length} gruppi', onAction: () => context.go('/live'))),
           SliverToBoxAdapter(child: _GroupChips(liveGroups, base: '/live')),
-          SliverToBoxAdapter(child: _GroupPreview(liveGroups.first, active)),
+          if (livePreview != null) SliverToBoxAdapter(child: _GroupPreview(livePreview, active)),
         ],
-        if (movieGroups.isNotEmpty) ...[
+        if (moviePreview != null) ...[
           SliverToBoxAdapter(
               child: SectionHeader('Film',
                   action: 'Esplora', onAction: () => context.go('/movies'))),
-          SliverToBoxAdapter(child: _GroupPreview(movieGroups.first, active, poster: true)),
+          SliverToBoxAdapter(child: _GroupPreview(moviePreview, active, poster: true)),
         ],
         const SliverPadding(padding: EdgeInsets.only(bottom: 90)),
       ],
     );
   }
 }
+
+/// Pagina degli elenchi per il tipo del gruppo («Tutti» di una riga in primo piano).
+String _base(ChannelType? type) => switch (type) {
+      ChannelType.movie => '/movies',
+      ChannelType.series => '/series',
+      _ => '/live',
+    };
 
 class _Hero extends ConsumerWidget {
   const _Hero({this.channel, required this.total, this.playlistName, required this.wide});

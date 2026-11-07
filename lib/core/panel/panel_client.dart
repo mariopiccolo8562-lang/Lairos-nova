@@ -76,7 +76,7 @@ class PanelPlaylist {
 
 /// Stato del dispositivo restituito da /api/player/register.
 class PanelState {
-  const PanelState({required this.status, this.name = '', this.expires = '', this.playlists = const [], this.maintMsg = '', this.raw = const {}});
+  const PanelState({required this.status, this.name = '', this.expires = '', this.playlists = const [], this.maintMsg = '', this.perms = const {}, this.raw = const {}});
 
   /// active | pending | locked | expired | disabled | maintenance
   final String status;
@@ -84,6 +84,9 @@ class PanelState {
   final String expires;
   final List<PanelPlaylist> playlists;
   final String maintMsg;
+
+  /// Permessi del cliente (solo quelli spenti contano: chiave assente = consentito).
+  final Map<String, bool> perms;
   final Map<String, dynamic> raw;
 
   bool get active => status == 'active';
@@ -95,8 +98,23 @@ class PanelState {
         expires: (j['expires'] ?? '').toString(),
         playlists: [for (final p in (j['playlists'] is List ? j['playlists'] as List : const [])) PanelPlaylist.fromJson(p)],
         maintMsg: (j['maintMsg'] ?? '').toString(),
+        perms: parsePerms(j['perms']),
         raw: j,
       );
+
+  /// Permessi dal pannello: oggetto {chiave: bool} (apertura) oppure il suo JSON (battito, campo «ph»).
+  static Map<String, bool> parsePerms(Object? raw) {
+    Object? d = raw;
+    if (d is String) {
+      try {
+        d = d.isEmpty ? null : jsonDecode(d);
+      } catch (_) {
+        d = null;
+      }
+    }
+    if (d is! Map) return const {};
+    return {for (final e in d.entries) if (e.value is bool) e.key.toString(): e.value as bool};
+  }
 
   static const PanelState locked = PanelState(status: 'locked');
 
@@ -187,10 +205,14 @@ class PanelClient {
 
   /// Battito per «Online ora» e per il controllo remoto (impostazioni imposte, comandi, aggiornamento).
   /// [stats]: misure del lettore (bw Mbps, line, dev, stalls10, ttff, fmt, drop) mostrate dal pannello in «Online ora».
-  Future<Map<String, dynamic>?> heartbeat({required String state, String title = '', String screen = '', int kickAck = 0, Map<String, Object?> cfg = const {}, Map<String, Object?> stats = const {}, String rcv = ''}) async {
+  /// [vis]: true = app in primo piano (menu o visione); false = appena andata in sfondo (il pannello la mostra subito
+  /// non in linea e quel battito non conta per il limite dei 15 s).
+  /// Risposta: HTTP 200 con i dati del battito; 429 con «wait» (secondi da aspettare); status 0 = server non raggiungibile.
+  Future<PanelResponse> heartbeat({required String state, String title = '', String screen = '', int kickAck = 0, Map<String, Object?> cfg = const {}, Map<String, Object?> stats = const {}, String rcv = '', bool vis = true}) async {
     try {
-      final r = await _post('/api/player/heartbeat', {
+      return await _post('/api/player/heartbeat', {
         ..._auth(),
+        'vis': vis,
         'state': state,
         'title': title,
         'ch': '',
@@ -209,9 +231,8 @@ class PanelClient {
         'rcv': rcv,
         if (kickAck > 0) 'kickAck': kickAck,
       });
-      return r.status == 200 ? r.body : null;
     } on PanelException {
-      return null;
+      return const PanelResponse(0, null);
     }
   }
 
