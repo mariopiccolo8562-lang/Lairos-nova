@@ -28,7 +28,7 @@ class MainActivity : FlutterActivity() {
                 "openInstallPerm" -> {
                     val ok = android.os.Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()
                     if (!ok) {
-                        android.widget.Toast.makeText(this, "Attiva «Consenti da questa fonte», poi premi INDIETRO", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(this, "Attiva «Consenti da questa fonte» per gli aggiornamenti dell'app, poi premi INDIETRO", android.widget.Toast.LENGTH_LONG).show()
                         for (i in listOf(android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")), android.content.Intent(android.provider.Settings.ACTION_SETTINGS))) { try { startActivity(i); break } catch (_: Exception) {} }
                     }
                     result.success(ok)

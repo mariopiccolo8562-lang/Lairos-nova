@@ -93,7 +93,7 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
       case 'exit':
         exitApp();
       case 'pin':
-        // il fornitore ha riportato il PIN a 0000: si chiede subito di sceglierne uno nuovo
+        // PIN riportato a 0000 dal pannello: nessun avviso, si chiede subito di sceglierne uno nuovo (come alla prima installazione)
         maybeAskParentalPin(context, ref, force: true);
       case 'relink':
         // scollegata dal fornitore: se non restano liste proprie si torna alla schermata iniziale

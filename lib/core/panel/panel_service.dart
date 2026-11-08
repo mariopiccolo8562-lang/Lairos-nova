@@ -14,6 +14,7 @@ import '../player/stream_engine.dart';
 import '../providers.dart';
 import '../xtream/xtream_api.dart';
 import 'panel_client.dart';
+import 'remote_quiet.dart';
 
 /// Comando del pannello che tocca l'interfaccia (lo esegue la shell): reload | settings | exit.
 class UiCommand {
@@ -41,6 +42,12 @@ class PanelService extends ChangeNotifier {
     // a lettore chiuso ripartono i lavori rimandati durante la visione (liste, refresh)
     _ref.listen<int>(watchingProvider, (_, n) {
       if (n == 0) unawaited(_runDeferred());
+      // PIN reimpostato durante la visione: a lettore chiuso si chiede subito il nuovo PIN
+      if (n == 0 && _pinAsk.pending) {
+        Timer(const Duration(milliseconds: 1200), () {
+          if (!_disposed && !_watching && _pinAsk.onViewEnd()) _emit('pin');
+        });
+      }
     });
     // presenza: «in sfondo» quando nessuna schermata dell'app è visibile (hidden / paused / detached)
     final now = WidgetsBinding.instance.lifecycleState;
@@ -67,6 +74,8 @@ class PanelService extends ChangeNotifier {
   Timer? _refresh;
   int _kickSeen = 0;
   int _updSeen = 0;
+  /// PIN reimpostato dal pannello durante la visione: il nuovo PIN si chiede a visione finita.
+  final PinAsk _pinAsk = PinAsk();
   // presenza (vis): app visibile, battito in viaggio, «vado in sfondo» in viaggio, nuovo tentativo al ritorno
   AppLifecycleListener? _life;
   bool _visible = true;
@@ -534,7 +543,8 @@ class PanelService extends ChangeNotifier {
             _ref.read(settingsProvider.notifier).update((x) => x.copyWith(clearPin: true, pinLater: 0));
             _ref.read(parentalUnlockedProvider.notifier).state = false;
             await c.cmdAck(id, true, 'PIN riportato a 0000');
-            if (_ref.read(watchingProvider) == 0) _emit('pin');
+            // senza avvisi sul «fornitore»: si chiede subito il nuovo PIN, come alla prima installazione (a visione finita)
+            if (_pinAsk.onReset(watching: _watching)) _emit('pin');
           case 'exit':
             await c.cmdAck(id, true, 'chiusa');
             _emit('exit');
