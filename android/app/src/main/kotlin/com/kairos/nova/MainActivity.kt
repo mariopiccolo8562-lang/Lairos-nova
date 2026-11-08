@@ -6,6 +6,7 @@ import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.concurrent.thread
 
 /**
  * Parte nativa di Kairos Nova: un solo canale («kairos/nova») per le cose che Flutter non può fare da solo.
@@ -50,7 +51,15 @@ class MainActivity : FlutterActivity() {
                         "totalMemMb" to (mi.totalMem / (1024L * 1024L)).toInt(),
                     ))
                 }
-                "updateStatus" -> result.success(Updater.status(this, (call.argument<Number>("code") ?: 0).toInt()))
+                "updateStatus" -> {
+                    val code = (call.argument<Number>("code") ?: 0).toInt()
+                    // verificare l'APK già scaricato (pacchetto, versione, firma) vuol dire leggere tutto il file:
+                    // fuori dal thread dell'interfaccia, anche all'avvio quando si controlla l'aggiornamento obbligatorio
+                    thread(name = "kx-apk-status") {
+                        val st: Map<String, Any> = try { Updater.status(this, code) } catch (_: Exception) { mapOf("ready" to false) }
+                        runOnUiThread { result.success(st) }
+                    }
+                }
                 "updatePrefetch" -> {
                     val url = call.argument<String>("url") ?: ""
                     val code = (call.argument<Number>("code") ?: 0).toInt()

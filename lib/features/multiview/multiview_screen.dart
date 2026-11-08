@@ -33,6 +33,12 @@ class _MultiviewScreenState extends ConsumerState<MultiviewScreen> {
     PaintingBinding.instance.imageCache.clear();
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ref.read(appUpdaterProvider).mustUpdate) {
+        // aggiornamento obbligatorio scaduto: niente visione, si torna al menu dove compare la finestra
+        if (context.canPop()) context.pop();
+        return;
+      }
       final add = GoRouterState.of(context).uri.queryParameters['add'];
       final id = int.tryParse(add ?? '');
       if (id != null) _assign(0, ref.read(dbProvider).channel(id));

@@ -10,18 +10,21 @@ bool _open = false;
 
 /// Propone la versione nuova: «Installa ora» se l'APK è già scaricato in background, altrimenti «Aggiorna ora»
 /// con l'avanzamento. Se l'aggiornamento è obbligatorio e scaduto, la finestra non si chiude finché non si installa.
+/// Lo stato (obbligatorio, pronto, versione) si rilegge a ogni cambiamento: all'avvio il blocco parte dallo stato
+/// salvato e la parte nativa lo riconferma subito dopo.
 Future<void> showUpdateDialog(BuildContext context, AppUpdater updater) async {
-  final u = updater.pending;
-  if (u == null || _open) return;
+  final first = updater.pending;
+  if (first == null || _open) return;
   _open = true;
   try {
-    final must = updater.mustUpdate;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => ListenableBuilder(
         listenable: updater,
         builder: (context, _) {
+          final u = updater.pending ?? first;
+          final must = updater.mustUpdate;
           final ready = updater.ready;
           final p = updater.progress;
           final downloading = p >= 0 && p < 100;
@@ -69,5 +72,6 @@ Future<void> showUpdateDialog(BuildContext context, AppUpdater updater) async {
     );
   } finally {
     _open = false;
+    updater.cancelPendingInstall(); // chiusa con «Più tardi»: niente installazioni che partono da sole dopo
   }
 }

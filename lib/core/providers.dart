@@ -204,6 +204,10 @@ final watchingProvider = StateProvider<int>((ref) => 0);
 /// Aggiornamento dell'app (feed della release, politica del fornitore, download in background, installazione).
 final appUpdaterProvider = ChangeNotifierProvider<AppUpdater>((ref) {
   final u = AppUpdater(ref.watch(prefsProvider), watching: () => ref.read(watchingProvider) > 0);
+  // lettore chiuso: la proposta arrivata durante la visione si mostra adesso, nel menu (non si perde dietro al lettore)
+  ref.listen<int>(watchingProvider, (prev, n) {
+    if (n == 0 && (prev ?? 0) > 0) u.onWatchingEnded();
+  });
   ref.onDispose(u.dispose);
   return u;
 });

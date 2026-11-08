@@ -57,9 +57,10 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
           version: u.currentVersion,
           model: (info['model'] ?? '').toString(),
           sdk: info['sdk'] is num ? (info['sdk'] as num).toInt() : 0);
-      // controllo genitori: al primo avvio si chiede di scegliere il PIN (quello iniziale è 0000)
+      // controllo genitori: al primo avvio si chiede di scegliere il PIN (quello iniziale è 0000); con un
+      // aggiornamento obbligatorio da installare prima la sua finestra, senza altre finestre sopra
       await Future<void>.delayed(const Duration(milliseconds: 1800));
-      if (mounted) await maybeAskParentalPin(context, ref);
+      if (mounted && !u.mustUpdate) await maybeAskParentalPin(context, ref);
     });
   }
 

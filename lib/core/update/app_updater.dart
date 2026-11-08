@@ -79,13 +79,18 @@ class NovaNative {
 ///   «Installa ora» e al cliente resta solo la conferma di Android.
 /// - Aggiornamento obbligatorio (deciso dal fornitore: subito / dopo 3 o 7 giorni dal primo avviso): scaduto il
 ///   termine l'app si apre solo dopo aver installato, ma soltanto se l'APK è già pronto sul dispositivo.
+/// - La versione trovata (codice, versione, link, APK già pronto) e la politica del fornitore restano salvate sul
+///   dispositivo: all'avvio il blocco obbligatorio vale subito, anche senza rete e prima del controllo in rete.
 class AppUpdater extends ChangeNotifier {
   AppUpdater(this._prefs, {required this.watching}) {
     _sub = NovaNative.updateEvents.listen(_onEvent);
     _bgLocal = _prefs.getBool('bg_update') ?? true;
     _policy = _decodePolicy(_prefs.getString('upd_policy'));
+    _rcPolicy = _savedRemotePolicy(_prefs.getString('kx_rc'));
     _first = _prefs.getString('upd_first') ?? '';
   }
+
+  static const String _kPending = 'upd_pending';
 
   final SharedPreferences _prefs;
 
@@ -102,6 +107,9 @@ class AppUpdater extends ChangeNotifier {
   Map<String, String> _policy = const {}; // politica pubblica (profilo dell'app nel pannello)
   Map<String, String> _rcPolicy = const {}; // politica del fornitore per questo dispositivo (app collegata): vince
   String _first = '';
+  bool _offerDeferred = false; // proposta arrivata durante la visione: si mostra a lettore chiuso
+  bool _wantInstall = false; // il cliente ha premuto Installa: si installa appena l'APK è pronto
+  bool _permAsked = false; // aperta la schermata «Installa app sconosciute»: al ritorno si riprova da soli
 
   Map<String, String> get _eff => {..._policy, ..._rcPolicy};
 
@@ -169,7 +177,13 @@ class AppUpdater extends ChangeNotifier {
     final info = await NovaNative.deviceInfo();
     currentVersion = (info['version'] ?? '').toString();
     currentCode = (info['versionCode'] is num) ? (info['versionCode'] as num).toInt() : 0;
+    // versione trovata in un'apertura precedente (salvata sul dispositivo): un aggiornamento obbligatorio scaduto
+    // blocca subito, anche senza rete e senza aspettare il controllo in rete (che parte tra 25 s); che il file sia
+    // ancora lì e valido lo riconferma la parte nativa
+    _restorePending();
     notifyListeners();
+    if (ready) _maybeOffer();
+    unawaited(_confirmReady());
     _timer?.cancel();
     Timer(const Duration(seconds: 25), () => unawaited(check()));
     _timer = Timer.periodic(const Duration(hours: 1), (_) => unawaited(check()));
@@ -179,6 +193,12 @@ class AppUpdater extends ChangeNotifier {
   /// trovata si ripropone.
   void onForeground() {
     _offeredCode = 0;
+    if (_permAsked) {
+      // ritorno dalla schermata del permesso «Installa app sconosciute»: l'installazione riparte da sola
+      _permAsked = false;
+      unawaited(_installAfterPermission());
+      return;
+    }
     final last = _lastCheck;
     if (last == null || DateTime.now().difference(last) > const Duration(minutes: 10)) {
       unawaited(check());
@@ -213,6 +233,7 @@ class AppUpdater extends ChangeNotifier {
       if (code <= currentCode || !url.startsWith('https://')) {
         pending = null;
         ready = false;
+        _savePending();
         if (manual) message = 'Hai già l\'ultima versione ($currentVersion)';
         notifyListeners();
         return null;
@@ -228,6 +249,7 @@ class AppUpdater extends ChangeNotifier {
       await _firstSeen(u);
       final st = await NovaNative.updateStatus(code);
       ready = st['ready'] == true;
+      _savePending();
       final metered = st['metered'] == true;
       if (!ready && !manual && (bgUpdate || force) && (force || !metered) && !watching() && _failed < 3) {
         await NovaNative.updatePrefetch(url, code); // l'esito arriva con l'evento ready | failed
@@ -245,6 +267,7 @@ class AppUpdater extends ChangeNotifier {
   Future<void> install() async {
     final u = pending;
     if (u == null) return;
+    _wantInstall = true;
     message = null;
     progress = ready ? 100 : 0;
     notifyListeners();
@@ -280,10 +303,87 @@ class AppUpdater extends ChangeNotifier {
 
   void _maybeOffer({bool manual = false}) {
     final u = pending;
-    if (u == null || watching()) return;
+    if (u == null) return;
+    if (watching()) {
+      _offerDeferred = true; // niente finestre sopra il lettore: si mostra al ritorno nel menu
+      return;
+    }
     if (!manual && !mustUpdate && _offeredCode == u.code) return;
     _offeredCode = u.code;
     offer.value = u;
+  }
+
+  /// Lettore chiuso: la proposta arrivata (o rimandata) mentre si guardava si mostra adesso, nel menu, invece di
+  /// perdersi fino al controllo dopo; un aggiornamento obbligatorio scaduto si propone comunque.
+  void onWatchingEnded() {
+    if (!_offerDeferred && !mustUpdate) return;
+    _offerDeferred = false;
+    _maybeOffer();
+  }
+
+  /// Finestra chiusa («Più tardi»): niente installazioni che partono da sole dopo.
+  void cancelPendingInstall() {
+    _wantInstall = false;
+    _permAsked = false;
+  }
+
+  /// Salva sul dispositivo la versione trovata (o la toglie quando non c'è più).
+  void _savePending() {
+    final u = pending;
+    if (u == null) {
+      _prefs.remove(_kPending);
+    } else {
+      _prefs.setString(_kPending, jsonEncode({'code': u.code, 'version': u.version, 'url': u.url, 'ready': ready}));
+    }
+  }
+
+  /// Versione salvata in un'apertura precedente: vale se è più nuova di quella installata (altrimenti è già installata).
+  void _restorePending() {
+    final raw = _prefs.getString(_kPending);
+    if (raw == null || raw.isEmpty || currentCode <= 0) return;
+    try {
+      final j = jsonDecode(raw);
+      if (j is Map) {
+        final code = j['code'] is num ? (j['code'] as num).toInt() : 0;
+        final url = (j['url'] ?? '').toString();
+        if (code > currentCode && url.startsWith('https://')) {
+          pending = UpdateInfo(code: code, version: (j['version'] ?? '').toString(), url: url);
+          ready = j['ready'] == true;
+          return;
+        }
+      }
+    } catch (_) {}
+    _prefs.remove(_kPending);
+  }
+
+  /// La parte nativa riconferma che l'APK salvato c'è ancora ed è valido (verifica fuori dal thread dell'interfaccia).
+  Future<void> _confirmReady() async {
+    final u = pending;
+    if (u == null) return;
+    final st = await NovaNative.updateStatus(u.code);
+    if (st.isEmpty || pending?.code != u.code) return;
+    final now = st['ready'] == true;
+    if (now != ready) {
+      ready = now;
+      _savePending();
+      notifyListeners();
+    }
+    if (ready) _maybeOffer();
+  }
+
+  /// Ritorno dalla schermata del permesso: se ora è concesso si installa, altrimenti il messaggio lo dice.
+  Future<void> _installAfterPermission() async {
+    final u = pending;
+    if (u == null) return;
+    final st = await NovaNative.updateStatus(u.code);
+    if (pending?.code != u.code) return;
+    if (st['canInstall'] == true) {
+      await install();
+    } else {
+      message = 'Senza il permesso «Installa app sconosciute» per Kairos Nova l\'aggiornamento non si può installare: '
+          'premi di nuovo Installa ora e consentilo';
+      notifyListeners();
+    }
   }
 
   void _onEvent(Map<String, dynamic> e) {
@@ -294,26 +394,61 @@ class AppUpdater extends ChangeNotifier {
         if (code == pending?.code) {
           ready = true;
           _offeredCode = 0;
-          _maybeOffer();
+          _savePending();
+          if (_wantInstall) {
+            unawaited(install()); // Installa premuto mentre lo scaricamento in background era in corso: si installa ora
+          } else {
+            _maybeOffer();
+          }
         }
       case 'failed':
         _failed++; // si riprova al prossimo controllo (al massimo tre volte per versione)
+        if (_wantInstall) {
+          // il cliente aspettava questo scaricamento per installare: la finestra non resta ferma
+          _wantInstall = false;
+          progress = -1;
+          message = 'Aggiornamento non riuscito: ${e['msg'] ?? 'errore'}';
+        }
         _maybeOffer(); // intanto il cliente può scaricarla a mano
       case 'progress':
         progress = (e['p'] is num) ? (e['p'] as num).toInt() : progress;
       case 'installer':
+        _wantInstall = false;
         progress = -1;
         message = 'Conferma l\'installazione nella schermata di Android';
       case 'perm':
+        _wantInstall = false;
+        _permAsked = true;
         progress = -1;
-        message = 'Consenti a Kairos Nova di installare app nelle impostazioni che si sono aperte, poi riprova';
+        message = 'Consenti a Kairos Nova di installare app (permesso «Installa app sconosciute») nella schermata che si è '
+            'aperta: tornando qui l\'installazione riparte da sola';
       case 'error':
+        _wantInstall = false;
         progress = -1;
         message = 'Aggiornamento non riuscito: ${e['msg'] ?? 'errore'}';
       case 'busy':
-        message = 'Download già in corso';
+        // scaricamento in background già in corso: la finestra non resta ferma, si installa appena è pronto
+        progress = -1;
+        message = 'Download già in corso: l\'installazione parte appena è pronto';
     }
     notifyListeners();
+  }
+
+  /// Voci «bgupd» e «force» del controllo remoto salvate dal pannello (kx_rc), come le passa applyRemotePolicy:
+  /// valgono già all'avvio. Prima tornavano solo quando il pannello le cambiava: dopo un riavvio un aggiornamento
+  /// reso obbligatorio per questo dispositivo non bloccava più.
+  static Map<String, String> _savedRemotePolicy(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final j = jsonDecode(raw);
+      if (j is Map) {
+        return Map.unmodifiable({
+          for (final k in const ['bgupd', 'force'])
+            if (j[k] != null) k: j[k].toString(),
+        });
+      }
+    } catch (_) {}
+    return const {};
   }
 
   static Map<String, String> _decodePolicy(String? raw) {

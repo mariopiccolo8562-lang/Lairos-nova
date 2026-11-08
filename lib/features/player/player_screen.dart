@@ -57,7 +57,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     PaintingBinding.instance.imageCache.clear();
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _load(widget.channelId);
+    if (ref.read(appUpdaterProvider).mustUpdate) {
+      // aggiornamento obbligatorio scaduto: nessun canale prima di installare. Si torna al menu, dove compare
+      // la finestra che blocca l'app (anche se il canale era stato scelto un attimo prima che comparisse)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && context.canPop()) context.pop();
+      });
+    } else {
+      _load(widget.channelId);
+    }
     _scheduleHide();
   }
 

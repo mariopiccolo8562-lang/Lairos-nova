@@ -55,6 +55,8 @@ object Updater {
     /** APK di [code] già scaricato e verificato (anche in un'apertura precedente) */
     fun ready(ctx: Context, code: Int): Boolean {
         if (readyCode == code && readyFile?.exists() == true) return true
+        // scaricamento in corso: il file può essere a metà, quindi non è pronto (e non va cancellato)
+        if (busy.get()) return false
         val f = fileFor(ctx, code)
         if (!f.exists()) return false
         if (f.length() < 300_000 || ApkCheck.verify(ctx, f) != null) { f.delete(); return false }
@@ -160,7 +162,7 @@ object Updater {
     private fun launch(a: Activity, apk: File) {
         if (Build.VERSION.SDK_INT >= 26 && !a.packageManager.canRequestPackageInstalls()) {
             event("perm")
-            Toast.makeText(a, "Consenti a Kairos Nova di installare app, poi riprova l'aggiornamento", Toast.LENGTH_LONG).show()
+            Toast.makeText(a, "Consenti a Kairos Nova di installare app, poi torna indietro: l'installazione riparte da sola", Toast.LENGTH_LONG).show()
             val tries = listOf(
                 Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.packageName)),
                 Intent(Settings.ACTION_SECURITY_SETTINGS),
