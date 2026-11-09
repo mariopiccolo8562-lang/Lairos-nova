@@ -15,6 +15,7 @@ import '../../core/panel/panel_service.dart';
 import '../../core/parental.dart';
 import '../../core/player/stream_engine.dart';
 import '../../core/providers.dart';
+import '../../core/quality_box.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../shared/widgets/widgets.dart';
 
@@ -250,8 +251,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Widget build(BuildContext context) {
     final c = _channel;
     final settings = ref.watch(settingsProvider);
-    // permesso «resInd» del pannello: risoluzione e FPS (riquadro della diretta, indicatore e diagnostica)
-    final resInd = ref.watch(panelProvider.select((p) => p.perm('resInd')));
+    // permesso «resInd» e voce «qbox» del pannello: risoluzione e FPS (riquadro della diretta, indicatore e diagnostica);
+    // «qbox» «off» li toglie come «resInd» bloccato, «noq» toglie solo la sigla di qualità (vedi quality_box.dart)
+    final qbox = ref.watch(panelProvider.select((p) => QualityBox.of(p.remoteConfig['qbox'])));
+    final resInd = qbox.shown(ref.watch(panelProvider.select((p) => p.perm('resInd'))));
     final live = c != null && c.type == ChannelType.live;
     final topPad = MediaQuery.paddingOf(context).top;
     return Scaffold(
@@ -322,7 +325,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
               // Overlay diagnostica
               if (resInd && (settings.showHealthOverlay || _showInfo))
-                Positioned(top: 24, left: 24, child: _HealthBadge(st.health, st)),
+                Positioned(top: 24, left: 24, child: _HealthBadge(st.health, st, qbox)),
 
               // UI principale
               AnimatedOpacity(
@@ -349,7 +352,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                 Positioned(
                   top: topPad + 64,
                   right: 20,
-                  child: IgnorePointer(child: _ResBox(status: st, osd: _showUi, hidden: _numberBuffer.isNotEmpty)),
+                  child: IgnorePointer(child: _ResBox(status: st, osd: _showUi, hidden: _numberBuffer.isNotEmpty, mode: qbox)),
                 ),
             ]),
           ),
@@ -437,9 +440,11 @@ class _Failed extends StatelessWidget {
 }
 
 class _HealthBadge extends StatelessWidget {
-  const _HealthBadge(this.h, this.st);
+  const _HealthBadge(this.h, this.st, this.mode);
   final StreamHealth h;
   final EngineStatus st;
+  /// voce «qbox» del pannello: con «noq» senza la sigla di qualità
+  final QualityBox mode;
   @override
   Widget build(BuildContext context) {
     const s = TextStyle(fontSize: 11.5, fontFamily: 'monospace', color: KairosColors.textDim);
@@ -447,7 +452,7 @@ class _HealthBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       radius: 10,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${h.resolutionLabel} ${h.width}×${h.height} · ${h.fps.toStringAsFixed(0)} fps · ${h.codec}${h.hwdec.isEmpty ? '' : ' · ${h.hwdec}'}',
+        Text(qualityDiagText(h.resolutionLabel, '${h.width}×${h.height} · ${h.fps.toStringAsFixed(0)} fps · ${h.codec}${h.hwdec.isEmpty ? '' : ' · ${h.hwdec}'}', mode),
             style: s.copyWith(color: KairosColors.cyan)),
         Text('bitrate ${h.bitrateKbps} kbps · rete ${h.speedKbps} kbps · buffer ${h.bufferSeconds.toStringAsFixed(1)}s', style: s),
         Text('drop ${h.droppedFrames} · stalli ${h.stalls} · reconnect ${h.reconnects} · start ${h.latencyMs} ms', style: s),
@@ -477,7 +482,8 @@ class _Overlay extends ConsumerWidget {
     final nn = ref.watch(nowNextProvider(c.tvgId));
     final now = DateTime.now();
     final pad = MediaQuery.paddingOf(context);
-    final resInd = ref.watch(panelProvider.select((p) => p.perm('resInd')));
+    final qbox = ref.watch(panelProvider.select((p) => QualityBox.of(p.remoteConfig['qbox'])));
+    final resInd = qbox.shown(ref.watch(panelProvider.select((p) => p.perm('resInd'))));
 
     return Column(children: [
       // Top bar
@@ -499,7 +505,7 @@ class _Overlay extends ConsumerWidget {
                   style: const TextStyle(color: KairosColors.textDim, fontSize: 12)),
             ]),
           ),
-          if (resInd) _Badge(status.health.resolutionLabel, status.state == EngineState.playing ? KairosColors.lime : KairosColors.textDim),
+          if (resInd) _Badge(qualityBadgeText(status.health.resolutionLabel, status.health.height, qbox), status.state == EngineState.playing ? KairosColors.lime : KairosColors.textDim),
           if (status.isLive) const _Badge('LIVE', KairosColors.red),
           IconButton(onPressed: () { ref.read(actionsProvider).toggleFavorite(c); onInteract(); },
               icon: Icon(c.isFavorite ? Icons.favorite : Icons.favorite_border, color: KairosColors.magenta)),
@@ -666,11 +672,13 @@ class _Ctl extends StatelessWidget {
 
 /// Riquadro «FHD · 1080p · 50 fps» per i canali in diretta: ~6 s dopo il primo fotogramma, ~4 s a ogni cambio di
 /// risoluzione (qualità adattiva) e sempre mentre è aperta la barra informazioni. FPS omessi se il motore non li dà.
+/// Con la voce «qbox» «noq» del pannello senza la sigla di qualità: «1080p · 50 fps».
 class _ResBox extends StatefulWidget {
-  const _ResBox({required this.status, required this.osd, required this.hidden});
+  const _ResBox({required this.status, required this.osd, required this.hidden, required this.mode});
   final EngineStatus status;
   final bool osd;
   final bool hidden;
+  final QualityBox mode;
 
   @override
   State<_ResBox> createState() => _ResBoxState();
@@ -741,12 +749,10 @@ class _ResBoxState extends State<_ResBox> {
     final h = st.health.height;
     final off = st.state == EngineState.failed || st.state == EngineState.ended || st.state == EngineState.idle;
     if (widget.hidden || off || !_started || h <= 0 || !(widget.osd || _timed)) return const SizedBox.shrink();
-    final q = h >= 2000 ? '4K' : (h >= 1000 ? 'FHD' : (h >= 700 ? 'HD' : 'SD'));
-    final fps = st.health.fps;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(color: const Color(0xB3000000), borderRadius: BorderRadius.circular(6)),
-      child: Text(fps > 0 ? '$q · ${h}p · ${fps.round()} fps' : '$q · ${h}p',
+      child: Text(qualityBoxText(h, st.health.fps, widget.mode),
           style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
     );
   }

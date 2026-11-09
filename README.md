@@ -72,6 +72,15 @@ Regola comune a tutte le app Kairos (Controllo remoto del pannello, chiave `adul
 - Negli elenchi (Live, Film, Serie, Guida) i gruppi per adulti vanno in fondo, come quelli di `home.hide`, e restano raggiungibili; ricerca, zapping e PIN del controllo genitori non cambiano.
 - `adult` = `"on"`: tutto come prima, vale solo `home.hide`.
 
+## Riquadro della qualità nel lettore
+
+Regola comune a tutte le app Kairos (Controllo remoto del pannello, chiave `qbox`), per il riquadro in alto a destra dei canali in diretta («FHD · 1080p · 50 fps»: ~6 s all'apertura del canale, ~4 s a ogni cambio di risoluzione e sempre con la barra informazioni), l'indicatore della qualità nella barra in alto e la diagnostica del lettore:
+
+- `qbox` = `"off"`: niente riquadro, indicatore né diagnostica, come con il permesso «resInd» bloccato; nelle Impostazioni sparisce l'interruttore «Overlay diagnostica».
+- `qbox` = `"noq"`: tutto resta, senza la sigla di qualità (4K, FHD, HD, SD): riquadro «1080p · 50 fps», indicatore «1080p», diagnostica «1920×1080 · 50 fps · …».
+- `"full"`, vuota, assente o qualsiasi altro valore: come prima.
+- Il permesso «resInd» bloccato nasconde sempre tutto. Nomi dei canali, avvisi, qualità adattiva e dati per il pannello non cambiano; una voce cambiata durante la visione vale subito. Regole in `lib/core/quality_box.dart`, prove in `test/quality_box_test.dart`.
+
 ## Struttura
 
 ```
