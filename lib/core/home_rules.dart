@@ -55,13 +55,54 @@ final Map<int, String> _plainLetters = () {
   return map;
 }();
 
+// ---------------------------------------------------------------------------
+// Adulti fuori dalla Home: riconoscimento comune a tutte le app Kairos (contratto del 9 novembre 2026).
+
+/// Il pannello vuole gli adulti fuori dalla Home: rc «adult» diverso da «on», quindi anche assente o vuoto
+/// (anche senza collegamento al pannello).
+bool adultHiddenFromHome(Object? rcValue) => rcValue?.toString() != 'on';
+
+/// Nome pronto per il riconoscimento degli adulti. In Dart la forma NFKD non c'è: le lettere a larghezza piena
+/// (U+FF01–U+FF5E, «ＸＸＸ») diventano quelle normali sottraendo 0xFEE0, poi come [normalizeCategoryName]
+/// (minuscolo, senza accenti, spazi multipli ridotti a uno e tolti ai bordi).
+String adultNormalize(String value) {
+  final out = StringBuffer();
+  for (final rune in value.runes) {
+    out.writeCharCode(rune >= 0xFF01 && rune <= 0xFF5E ? rune - 0xFEE0 : rune);
+  }
+  return normalizeCategoryName(out.toString());
+}
+
+// Le due espressioni del contratto, identiche in tutte le app (stringhe «raw»: in una stringa normale «\b»
+// sarebbe il carattere di backspace). Si provano sul nome già normalizzato, quindi senza maiuscole.
+final RegExp _adultCategory = RegExp(
+    r'(\bxxx\b|adult|\bporn|erotic|erotik|erotis|erotiq|hentai|\b18\s*\+|\+\s*18\b|\bv\.?\s*m\.?\s*18\b|\bsexy?\b|\bhot\s*club\b|playboy|brazzers|hustler|dorcel|only\s*fans|red\s*light|\bx[\s-]?rated\b|\bnsfw\b|\bmilf\b|private\s*tv|vietato ai minori)');
+final RegExp _adultTitle =
+    RegExp(r'(\bxxx\b|\bporn|hentai|brazzers|playboy\s*tv|hustler\s*tv|dorcel|only\s*fans|\b18\s*\+|\+\s*18\b)');
+final RegExp _adultSwim = RegExp(r'adult\s*swim');
+
+/// Gruppo (categoria) per adulti: il nome normalizzato, tolto «adult swim», contiene una parola per adulti.
+bool adultCat(String name) => _adultCategory.hasMatch(adultNormalize(name).replaceAll(_adultSwim, ''));
+
+/// Titolo o canale per adulti: solo le parole forti (un film come «Sex Education» resta dov'è).
+bool adultTitle(String name) => _adultTitle.hasMatch(adultNormalize(name));
+
+/// Esito di [adultTitle] per ogni canale, film o serie, calcolato una volta sola per oggetto.
+final Expando<bool> _strongTitle = Expando<bool>('titolo per adulti');
+
+bool _titleOf(Channel c) => _strongTitle[c] ??= adultTitle(c.name);
+
 /// Home decisa dal fornitore (Controllo remoto del pannello): gruppi in primo piano (rc «home.top») e nascosti
 /// dalla Home (rc «home.hide»). Ogni voce è un nome o una parte di nome; maiuscole, accenti e spazi doppi non
 /// contano. Un gruppo nascosto non va mai in primo piano (come in Kairos Pro).
+///
+/// Con [hideAdult] (rc «adult» diverso da «on») i gruppi per adulti ([adultCat]) contano come nascosti e nelle
+/// righe della Home non entra nessun canale, film o serie per adulti ([blocked]).
 class HomeRules {
-  HomeRules._(this.top, this.hide);
+  HomeRules._(this.top, this.hide, this.hideAdult);
 
-  factory HomeRules.parse(String top, String hide) => HomeRules._(_split(top), _split(hide));
+  factory HomeRules.parse(String top, String hide, {bool hideAdult = false}) =>
+      HomeRules._(_split(top), _split(hide), hideAdult);
 
   /// Al massimo tante righe in primo piano nella Home.
   static const int maxTop = 10;
@@ -70,19 +111,23 @@ class HomeRules {
   final List<String> top;
   final List<String> hide;
 
+  /// Adulti fuori dalla Home: gruppi per adulti nascosti e nessun elemento per adulti nelle righe.
+  final bool hideAdult;
+
   /// Risultato per nome di gruppo: (posizione dello schema in primo piano o -1, nascosto).
   final Map<String, (int, bool)> _memo = <String, (int, bool)>{};
 
   static List<String> _split(String value) =>
       [for (final part in value.split(_separators)) normalizeCategoryName(part)]..removeWhere((p) => p.isEmpty);
 
-  bool get isEmpty => top.isEmpty && hide.isEmpty;
+  bool get isEmpty => top.isEmpty && hide.isEmpty && !hideAdult;
 
   (int, bool) _match(String name) {
     final known = _memo[name];
     if (known != null) return known;
     final n = normalizeCategoryName(name);
-    final isHidden = hide.any(n.contains);
+    // con gli adulti fuori dalla Home un gruppo per adulti conta come nascosto (una volta per nome)
+    final isHidden = hide.any(n.contains) || (hideAdult && adultCat(name));
     var rank = -1;
     if (!isHidden) {
       for (var i = 0; i < top.length; i++) {
@@ -97,7 +142,7 @@ class HomeRules {
   }
 
   /// Il gruppo non compare nella Home (negli elenchi va in fondo).
-  bool hidden(String groupName) => hide.isNotEmpty && _match(groupName).$2;
+  bool hidden(String groupName) => (hide.isNotEmpty || hideAdult) && _match(groupName).$2;
 
   /// Posizione del primo schema in primo piano che prende il gruppo (-1 = nessuno).
   int topRank(String groupName) => top.isEmpty ? -1 : _match(groupName).$1;
@@ -141,14 +186,59 @@ class HomeRules {
     picks.sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
     return [for (final p in picks.take(maxTop)) p.$3];
   }
+
+  /// Con gli adulti fuori dalla Home: il canale (o film, serie) non entra in nessuna riga della Home, perché il suo
+  /// gruppo è per adulti o nascosto, oppure il suo nome è un titolo per adulti. Senza filtro: mai.
+  /// Il gruppo si valuta una volta per nome, il titolo una volta per elemento (solo per quelli delle righe).
+  bool blocked(Channel c) => hideAdult && (hidden(c.groupName) || _titleOf(c));
+
+  /// Una riga della Home senza gli elementi per adulti (senza filtro, o se non ce ne sono, la stessa lista).
+  List<Channel> homeItems(List<Channel> items) {
+    if (!hideAdult) return items;
+    for (var i = 0; i < items.length; i++) {
+      if (blocked(items[i])) return [for (final c in items) if (!blocked(c)) c];
+    }
+    return items;
+  }
+
+  /// Canale in evidenza nella Home («Riprendi»): il primo visto di recente, poi il primo preferito, che non è di un
+  /// gruppo nascosto né, con gli adulti fuori dalla Home, per adulti.
+  Channel? hero(List<Channel> recent, List<Channel> favorites) {
+    for (final list in [recent, favorites]) {
+      for (final c in list) {
+        if (!hidden(c.groupName) && !blocked(c)) return c;
+      }
+    }
+    return null;
+  }
+
+  /// Con gli adulti fuori dalla Home, se fra i recenti e i preferiti c'erano solo canali da togliere il riquadro in
+  /// evidenza sceglie fra gli altri titoli della Home invece di restare senza titolo.
+  bool heroFromRows(List<Channel> recent, List<Channel> favorites) =>
+      hideAdult && (recent.isNotEmpty || favorites.isNotEmpty) && hero(recent, favorites) == null;
 }
 
-/// Regole della Home in uso: si ricalcolano solo quando il pannello cambia «home.top» o «home.hide».
+/// Regole della Home in uso: si ricalcolano solo quando il pannello cambia «home.top», «home.hide» o «adult».
 final homeRulesProvider = Provider<HomeRules>((ref) {
   final top = ref.watch(panelProvider.select((p) => p.remoteConfig['home.top'] ?? ''));
   final hide = ref.watch(panelProvider.select((p) => p.remoteConfig['home.hide'] ?? ''));
-  return HomeRules.parse(top, hide);
+  final hideAdult = ref.watch(panelProvider.select((p) => adultHiddenFromHome(p.remoteConfig['adult'])));
+  return HomeRules.parse(top, hide, hideAdult: hideAdult);
 });
+
+// Righe della Home senza gli elementi per adulti (con il filtro attivo): si ricalcolano solo quando cambia la riga
+// o una regola, non a ogni ricostruzione della Home (che avviene anche sotto il lettore, a ogni canale che parte).
+
+/// «Continua a guardare» della Home.
+final homeRecentProvider = Provider<List<Channel>>((ref) => ref.watch(homeRulesProvider).homeItems(ref.watch(recentProvider)));
+
+/// «Preferiti» della Home.
+final homeFavoritesProvider =
+    Provider<List<Channel>>((ref) => ref.watch(homeRulesProvider).homeItems(ref.watch(favoritesProvider)));
+
+/// Prime voci di un gruppo per le righe della Home ([groupPreviewProvider]).
+final homeGroupPreviewProvider = Provider.autoDispose.family<List<Channel>, ChannelQuery>(
+    (ref, q) => ref.watch(homeRulesProvider).homeItems(ref.watch(groupPreviewProvider(q))));
 
 /// Gruppi per gli elenchi (Live TV, Film, Serie, Guida): prima quelli in primo piano, in fondo i nascosti.
 final orderedGroupsProvider = Provider.family<List<ChannelGroup>, ChannelType>((ref, type) {

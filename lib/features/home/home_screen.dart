@@ -20,11 +20,15 @@ class HomeScreen extends ConsumerWidget {
     final playlists = ref.watch(playlistsProvider);
     final active = ref.watch(activePlaylistIdProvider);
     // recentProvider cambia solo quando parte un canale (non a ogni tick del lettore); il COUNT è in un provider
-    final recent = ref.watch(recentProvider);
-    final favs = ref.watch(favoritesProvider);
+    final recentAll = ref.watch(recentProvider);
+    final favsAll = ref.watch(favoritesProvider);
+    // adulti fuori dalla Home (rc «adult» diverso da «on»): righe senza canali, film e serie per adulti
+    final recent = ref.watch(homeRecentProvider);
+    final favs = ref.watch(homeFavoritesProvider);
     final allLive = ref.watch(groupsProvider(ChannelType.live));
     final allMovies = ref.watch(groupsProvider(ChannelType.movie));
-    // Home decisa dal pannello: gruppi in primo piano (home.top) e nascosti (home.hide); senza regole come sempre
+    // Home decisa dal pannello: gruppi in primo piano (home.top) e nascosti (home.hide); senza regole come sempre.
+    // Con gli adulti fuori dalla Home i gruppi per adulti contano come nascosti
     final rules = ref.watch(homeRulesProvider);
     final chosen = rules.top.isEmpty
         ? const <ChannelGroup>[]
@@ -38,9 +42,18 @@ class HomeScreen extends ConsumerWidget {
     final liveGroups = rules.order([for (final g in allLive) if (!rules.hidden(g.name)) g]);
     final livePreview = allLive.where(usual).firstOrNull;
     final moviePreview = allMovies.where(usual).firstOrNull;
-    // titolo in evidenza: mai un canale di un gruppo nascosto
-    final hero = recent.where((c) => !rules.hidden(c.groupName)).firstOrNull ??
-        favs.where((c) => !rules.hidden(c.groupName)).firstOrNull;
+    // titolo in evidenza: mai un canale di un gruppo nascosto né, con gli adulti fuori dalla Home, per adulti; se i
+    // canali da riprendere erano tutti da togliere, il primo titolo delle altre righe della Home
+    var hero = rules.hero(recentAll, favsAll);
+    if (hero == null && rules.heroFromRows(recentAll, favsAll)) {
+      for (final g in [...top, if (livePreview != null) livePreview, if (moviePreview != null) moviePreview]) {
+        final row = ref.watch(homeGroupPreviewProvider(_query(g, active)));
+        if (row.isNotEmpty) {
+          hero = row.first;
+          break;
+        }
+      }
+    }
 
     final wide = MediaQuery.sizeOf(context).width >= 760;
 
@@ -57,12 +70,18 @@ class HomeScreen extends ConsumerWidget {
           const SliverToBoxAdapter(child: SectionHeader('Continua a guardare')),
           SliverToBoxAdapter(child: _Row(recent, height: 170)),
         ],
-        // gruppi in primo piano subito dopo «Continua a guardare», prima di tutte le altre righe
-        for (final g in top) ...[
+        // gruppi in primo piano subito dopo «Continua a guardare», prima di tutte le altre righe (una riga rimasta
+        // vuota senza gli elementi per adulti sparisce con la sua intestazione)
+        for (final g in top)
           SliverToBoxAdapter(
-              child: SectionHeader(g.name, action: 'Tutti', onAction: () => context.go('${_base(g.type)}?g=${Uri.encodeComponent(g.name)}'))),
-          SliverToBoxAdapter(child: _GroupPreview(g, active, poster: g.type == ChannelType.movie || g.type == ChannelType.series)),
-        ],
+            child: _GroupPreview(
+              g,
+              active,
+              poster: g.type == ChannelType.movie || g.type == ChannelType.series,
+              header: SectionHeader(g.name,
+                  action: 'Tutti', onAction: () => context.go('${_base(g.type)}?g=${Uri.encodeComponent(g.name)}')),
+            ),
+          ),
         if (favs.isNotEmpty) ...[
           SliverToBoxAdapter(
               child: SectionHeader('Preferiti',
@@ -76,12 +95,15 @@ class HomeScreen extends ConsumerWidget {
           SliverToBoxAdapter(child: _GroupChips(liveGroups, base: '/live')),
           if (livePreview != null) SliverToBoxAdapter(child: _GroupPreview(livePreview, active)),
         ],
-        if (moviePreview != null) ...[
+        if (moviePreview != null)
           SliverToBoxAdapter(
-              child: SectionHeader('Film',
-                  action: 'Esplora', onAction: () => context.go('/movies'))),
-          SliverToBoxAdapter(child: _GroupPreview(moviePreview, active, poster: true)),
-        ],
+            child: _GroupPreview(
+              moviePreview,
+              active,
+              poster: true,
+              header: SectionHeader('Film', action: 'Esplora', onAction: () => context.go('/movies')),
+            ),
+          ),
         const SliverPadding(padding: EdgeInsets.only(bottom: 90)),
       ],
     );
@@ -94,6 +116,9 @@ String _base(ChannelType? type) => switch (type) {
       ChannelType.series => '/series',
       _ => '/live',
     };
+
+/// Prime voci del gruppo per la sua riga della Home (la stessa richiesta della riga e del titolo in evidenza).
+ChannelQuery _query(ChannelGroup g, int? playlistId) => ChannelQuery(type: g.type, group: g.name, playlistId: playlistId);
 
 class _Hero extends ConsumerWidget {
   const _Hero({this.channel, this.playlistName, required this.wide});
@@ -213,15 +238,20 @@ class _GroupChips extends StatelessWidget {
 }
 
 class _GroupPreview extends ConsumerWidget {
-  const _GroupPreview(this.group, this.playlistId, {this.poster = false});
+  const _GroupPreview(this.group, this.playlistId, {this.poster = false, this.header});
   final ChannelGroup group;
   final int? playlistId;
   final bool poster;
 
+  /// Intestazione della riga: si mostra solo se la riga ha qualcosa.
+  final Widget? header;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final items = ref.watch(groupPreviewProvider(ChannelQuery(type: group.type, group: group.name, playlistId: playlistId)));
-    return Padding(
+    // senza gli elementi per adulti (con il filtro attivo): una riga rimasta vuota non si mostra
+    final items = ref.watch(homeGroupPreviewProvider(_query(group, playlistId)));
+    if (items.isEmpty) return const SizedBox.shrink();
+    final row = Padding(
       padding: const EdgeInsets.only(top: 12),
       child: SizedBox(
         height: poster ? 290 : 160,
@@ -234,5 +264,8 @@ class _GroupPreview extends ConsumerWidget {
         ),
       ),
     );
+    final h = header;
+    if (h == null) return row;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [h, row]);
   }
 }

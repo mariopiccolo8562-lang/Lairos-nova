@@ -61,6 +61,15 @@ Il `StreamEngine` (libmpv via `media_kit`) è progettato "antifragile":
 - Rail laterale su schermi larghi, focus D-pad ovunque, `LEANBACK_LAUNCHER`, banner TV
 - APK split per ABI (arm64 / arm32 / x86_64)
 
+## Adulti fuori dalla Home
+
+Regola comune a tutte le app Kairos (Controllo remoto del pannello, chiave `adult`):
+
+- `adult` diverso da `"on"` (anche assente o vuoto, quindi di base e anche senza collegamento al pannello): nella Home **nessuna riga e nessun elemento per adulti**: titolo in evidenza («Riprendi»; se i canali da riprendere erano tutti per adulti si prende il primo delle altre righe), Continua a guardare, gruppi in primo piano, Preferiti, chip e anteprima dei Canali TV, Film. Una riga che resta vuota sparisce con la sua intestazione.
+- Un elemento è per adulti se il suo gruppo è per adulti o è nascosto da `home.hide`, oppure se il nome è un titolo per adulti (solo parole forti: «Sex Education» resta). Il riconoscimento (`adultCat`, `adultTitle` in `lib/core/home_rules.dart`) è quello del contratto comune, provato con i suoi 94 esempi (`test/adult_vectors.json`).
+- Negli elenchi (Live, Film, Serie, Guida) i gruppi per adulti vanno in fondo, come quelli di `home.hide`, e restano raggiungibili; ricerca, zapping e PIN del controllo genitori non cambiano.
+- `adult` = `"on"`: tutto come prima, vale solo `home.hide`.
+
 ## Struttura
 
 ```
