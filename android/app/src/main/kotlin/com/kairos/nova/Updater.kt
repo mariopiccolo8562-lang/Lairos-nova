@@ -71,6 +71,17 @@ object Updater {
         "canInstall" to (Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()),
     )
 
+    /**
+     * APK adatto al dispositivo. Il feed indica la versione a 64 bit, ma le chiavette Fire TV e i box vecchi hanno Android
+     * a 32 bit e non la installano («App non installata», anche con l'aggiornamento obbligatorio che blocca l'app): lì si
+     * scarica la versione a 32 bit della stessa release, che il workflow pubblica sempre insieme.
+     */
+    fun apkFor(url: String): String = abiUrl(url, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty())
+
+    /** logica di [apkFor]: [has64] = il dispositivo esegue app a 64 bit */
+    fun abiUrl(url: String, has64: Boolean): String =
+        if (!has64 && url.endsWith("/KairosNova-arm64.apk")) url.removeSuffix("KairosNova-arm64.apk") + "KairosNova-arm32.apk" else url
+
     /** scaricamento in background: nessuna finestra; evento ready | failed */
     fun prefetch(ctx: Context, url: String, code: Int) {
         if (ready(ctx, code)) { event("ready") { put("code", code) }; return }
@@ -78,7 +89,7 @@ object Updater {
         thread(name = "kx-apk-bg") {
             try {
                 val out = fileFor(ctx, code)
-                fetch(ctx, url, out, null)
+                fetch(ctx, apkFor(url), out, null)
                 readyFile = out; readyCode = code
                 cleanOld(ctx, out)
                 event("ready") { put("code", code) }
@@ -95,7 +106,7 @@ object Updater {
         thread(name = "kx-apk") {
             try {
                 val out = fileFor(a, code)
-                fetch(a, url, out) { p -> event("progress") { put("p", p) } }
+                fetch(a, apkFor(url), out) { p -> event("progress") { put("p", p) } }
                 readyFile = out; readyCode = code
                 cleanOld(a, out)
                 event("progress") { put("p", 100) }
@@ -189,11 +200,26 @@ object ApkCheck {
         val myCode = installedInfo(pm, ctx.packageName)?.let { code(it) } ?: 0L
         if (newCode == myCode) return "È la stessa versione già installata"
         if (newCode < myCode) return "La versione scaricata è più vecchia di quella installata"
+        // un APK a 64 bit scaricato prima su un dispositivo a 32 bit non si installa: via, si riscarica quello giusto
+        if (!abiOk(apk)) return "Questa versione non è adatta a questo dispositivo: riprova"
         val mine = certs(installedInfo(pm, ctx.packageName))
         val theirs = certs(archiveInfo(pm, apk.absolutePath, sigFlags()))
         if (mine.isNotEmpty() && theirs.isNotEmpty() && mine.intersect(theirs).isEmpty()) return "L'aggiornamento è firmato con una chiave diversa: disinstalla l'app e installala di nuovo dallo store"
         return null
     }
+
+    /** l'APK ha le librerie native per un'architettura che il dispositivo esegue (senza librerie native va bene ovunque) */
+    private fun abiOk(apk: File): Boolean = try {
+        java.util.zip.ZipFile(apk).use { z ->
+            val abis = HashSet<String>()
+            val e = z.entries()
+            while (e.hasMoreElements()) {
+                val n = e.nextElement().name
+                if (n.startsWith("lib/")) n.split('/').getOrNull(1)?.takeIf { it.isNotEmpty() }?.let { abis.add(it) }
+            }
+            abis.isEmpty() || Build.SUPPORTED_ABIS.any { it in abis }
+        }
+    } catch (_: Exception) { true }
 
     @Suppress("DEPRECATION")
     private fun code(p: PackageInfo): Long = if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else p.versionCode.toLong()
