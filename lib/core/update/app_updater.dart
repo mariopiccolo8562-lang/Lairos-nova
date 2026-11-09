@@ -84,12 +84,12 @@ Future<Object?> fetchFeedJson(Uri uri, {String userAgent = 'KairosNova'}) async 
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     final response = await request.close().timeout(const Duration(seconds: 10));
     if (response.statusCode != HttpStatus.ok) return null;
-    final bytes = BytesBuilder(copy: false);
+    final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 10))) {
-      bytes.add(chunk);
+      bytes.addAll(chunk);
       if (bytes.length > 256 * 1024) return null;
     }
-    return jsonDecode(utf8.decode(bytes.takeBytes(), allowMalformed: true));
+    return jsonDecode(utf8.decode(bytes, allowMalformed: true));
   } finally {
     client.close(force: true);
   }
