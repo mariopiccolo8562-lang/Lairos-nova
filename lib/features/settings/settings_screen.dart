@@ -9,6 +9,7 @@ import '../../core/panel/panel_service.dart';
 import '../../core/player/stream_engine.dart';
 import '../../core/parental.dart';
 import '../../core/providers.dart';
+import '../../core/quality_box.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../core/xtream/xtream_api.dart';
 import 'update_dialog.dart';
@@ -206,8 +207,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onSelectionChanged: panel.imposed('p.buffer') ? null : (v) => n.update((x) => x.copyWith(bufferProfile: v.first)),
                 ),
               ),
-              // con il permesso «risoluzione e FPS» spento dal fornitore la diagnostica (risoluzione, FPS) non c'è
-              if (panel.perm('resInd')) SwitchListTile(
+              // con il permesso «risoluzione e FPS» spento dal fornitore, o con il riquadro della qualità spento dal pannello
+              // (voce «qbox» «off»), la diagnostica (risoluzione, FPS) non c'è
+              if (QualityBox.of(panel.remoteConfig['qbox']).shown(panel.perm('resInd'))) SwitchListTile(
                 title: const Text('Overlay diagnostica'),
                 subtitle: const Text('Risoluzione, bitrate, buffer, frame persi'),
                 value: s.showHealthOverlay,
