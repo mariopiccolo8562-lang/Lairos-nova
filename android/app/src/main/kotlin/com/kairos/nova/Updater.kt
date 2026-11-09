@@ -72,24 +72,45 @@ object Updater {
     )
 
     /**
-     * APK adatto al dispositivo. Il feed indica la versione a 64 bit, ma le chiavette Fire TV e i box vecchi hanno Android
-     * a 32 bit e non la installano («App non installata», anche con l'aggiornamento obbligatorio che blocca l'app): lì si
-     * scarica la versione a 32 bit della stessa release, che il workflow pubblica sempre insieme.
+     * APK adatto al dispositivo. Il feed indica la versione a 64 bit («url»), ma le chiavette Fire TV e i box vecchi hanno
+     * Android a 32 bit e non la installano («App non installata», anche con l'aggiornamento obbligatorio che blocca l'app):
+     * lì si scarica la versione a 32 bit della stessa release («urlArm32» del feed, [url32]), che il workflow pubblica
+     * sempre insieme.
      */
-    fun apkFor(url: String): String = abiUrl(url, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty())
+    fun apkFor(url: String, url32: String = ""): String = abiUrl(url, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty(), url32)
 
-    /** logica di [apkFor]: [has64] = il dispositivo esegue app a 64 bit */
-    fun abiUrl(url: String, has64: Boolean): String =
-        if (!has64 && url.endsWith("/KairosNova-arm64.apk")) url.removeSuffix("KairosNova-arm64.apk") + "KairosNova-arm32.apk" else url
+    /**
+     * APK da provare in ordine per questo dispositivo: quello adatto del feed ([apkFor]), poi le riserve decise da Flutter
+     * per la stessa architettura ([alts] a 64 bit, [alts32] a 32 bit: lo stesso APK sulle basi successive, poi GitHub).
+     */
+    fun chainFor(url: String, url32: String, alts: List<String>, alts32: List<String>): List<String> =
+        abiChain(url, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty(), url32, alts, alts32)
 
-    /** scaricamento in background: nessuna finestra; evento ready | failed */
-    fun prefetch(ctx: Context, url: String, code: Int) {
+    /** logica di [chainFor]: [has64] = il dispositivo esegue app a 64 bit; solo link https, senza doppioni */
+    fun abiChain(url: String, has64: Boolean, url32: String, alts: List<String>, alts32: List<String>): List<String> =
+        (listOf(abiUrl(url, has64, url32)) + if (has64) alts else alts32).filter { it.startsWith("https://") }.distinct()
+
+    /**
+     * logica di [apkFor]: [has64] = il dispositivo esegue app a 64 bit; [url32] = «urlArm32» del feed, vuoto se manca.
+     * Senza urlArm32 il link a 32 bit si ricava dal nome: GitHub KairosNova-arm64.apk → KairosNova-arm32.apk,
+     * pannello /get/nova.apk → /get/nova-arm32.apk.
+     */
+    fun abiUrl(url: String, has64: Boolean, url32: String = ""): String = when {
+        has64 -> url
+        url32.startsWith("https://") -> url32
+        url.endsWith("/KairosNova-arm64.apk") -> url.removeSuffix("KairosNova-arm64.apk") + "KairosNova-arm32.apk"
+        url.endsWith("/get/nova.apk") -> url.removeSuffix("nova.apk") + "nova-arm32.apk"
+        else -> url
+    }
+
+    /** scaricamento in background: nessuna finestra; evento ready | failed. [alts]/[alts32]: riserve, vedi [chainFor] */
+    fun prefetch(ctx: Context, url: String, code: Int, url32: String = "", alts: List<String> = emptyList(), alts32: List<String> = emptyList()) {
         if (ready(ctx, code)) { event("ready") { put("code", code) }; return }
         if (!busy.compareAndSet(false, true)) return
         thread(name = "kx-apk-bg") {
             try {
                 val out = fileFor(ctx, code)
-                fetch(ctx, apkFor(url), out, null)
+                fetchAny(ctx, chainFor(url, url32, alts, alts32), out, null)
                 readyFile = out; readyCode = code
                 cleanOld(ctx, out)
                 event("ready") { put("code", code) }
@@ -99,14 +120,14 @@ object Updater {
         }
     }
 
-    /** installa: subito se l'APK è pronto, altrimenti lo scarica (eventi progress) e poi apre l'installer */
-    fun install(a: Activity, url: String, code: Int) {
+    /** installa: subito se l'APK è pronto, altrimenti lo scarica (eventi progress; riserve come in [prefetch]) e poi apre l'installer */
+    fun install(a: Activity, url: String, code: Int, url32: String = "", alts: List<String> = emptyList(), alts32: List<String> = emptyList()) {
         if (ready(a, code)) { launch(a, readyFile!!); return }
         if (!busy.compareAndSet(false, true)) { event("busy"); return }
         thread(name = "kx-apk") {
             try {
                 val out = fileFor(a, code)
-                fetch(a, apkFor(url), out) { p -> event("progress") { put("p", p) } }
+                fetchAny(a, chainFor(url, url32, alts, alts32), out) { p -> event("progress") { put("p", p) } }
                 readyFile = out; readyCode = code
                 cleanOld(a, out)
                 event("progress") { put("p", 100) }
@@ -119,6 +140,20 @@ object Updater {
 
     private fun cleanOld(ctx: Context, keep: File) {
         try { dir(ctx).listFiles()?.forEach { if (it != keep && it.name.endsWith(".apk")) it.delete() } } catch (_: Exception) {}
+    }
+
+    /** il primo di [urls] che si scarica e si verifica ([chainFor]); se nessuno riesce, l'errore del primo */
+    private fun fetchAny(ctx: Context, urls: List<String>, out: File, progress: ((Int) -> Unit)?) {
+        var err: Exception? = null
+        for (u in urls) {
+            try {
+                fetch(ctx, u, out, progress)
+                return
+            } catch (e: Exception) {
+                if (err == null) err = e
+            }
+        }
+        throw err ?: Exception("download non riuscito")
     }
 
     /** scarica [url] in [out] seguendo solo redirect https e verifica il file */

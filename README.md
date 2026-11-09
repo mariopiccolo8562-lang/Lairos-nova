@@ -6,6 +6,8 @@ Player IPTV per **Android, iOS e Android TV** con interfaccia futuristica stile 
 
 📦 **APK pronto:** scheda [Releases → latest](../../releases/tag/latest) (si rigenera a ogni push su `main`).
 
+**Aggiornamenti:** l'app li chiede a `https://store-k.download/get/nova.json` (indirizzo dei download `kDlBase` in `lib/core/update/app_updater.dart`), poi al pannello `https://panel-kairos.com/get/nova.json`, e scarica l'APK dal link del feed (`urlArm32` sui dispositivi a 32 bit; se non riesce, dalle basi successive e alla fine dalla release `latest`); solo se nessuno dei due risponde legge `kairos-nova.json` della release `latest` (riserva finché il repository è pubblico).
+
 ---
 
 ## Perché è veloce con 299k canali

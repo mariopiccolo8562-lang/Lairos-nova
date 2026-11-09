@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.concurrent.thread
 
@@ -18,6 +19,10 @@ class MainActivity : FlutterActivity() {
     companion object {
         @Volatile var channel: MethodChannel? = null
     }
+
+    /** link di riserva dell'APK decisi da Flutter (stesso APK sulle basi successive, poi GitHub): solo https */
+    private fun links(call: MethodCall, key: String): List<String> =
+        (call.argument<List<Any?>>(key) ?: emptyList()).mapNotNull { it as? String }.filter { it.startsWith("https://") }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -63,13 +68,15 @@ class MainActivity : FlutterActivity() {
                 "updatePrefetch" -> {
                     val url = call.argument<String>("url") ?: ""
                     val code = (call.argument<Number>("code") ?: 0).toInt()
-                    if (url.startsWith("https://") && code > 0) Updater.prefetch(this, url, code)
+                    val url32 = call.argument<String>("url32") ?: "" // «urlArm32» del feed: APK per Android a 32 bit
+                    if (url.startsWith("https://") && code > 0) Updater.prefetch(this, url, code, url32, links(call, "alts"), links(call, "alts32"))
                     result.success(true)
                 }
                 "updateInstall" -> {
                     val url = call.argument<String>("url") ?: ""
                     val code = (call.argument<Number>("code") ?: 0).toInt()
-                    if (url.startsWith("https://") && code > 0) Updater.install(this, url, code)
+                    val url32 = call.argument<String>("url32") ?: ""
+                    if (url.startsWith("https://") && code > 0) Updater.install(this, url, code, url32, links(call, "alts"), links(call, "alts32"))
                     result.success(true)
                 }
                 else -> result.notImplemented()
