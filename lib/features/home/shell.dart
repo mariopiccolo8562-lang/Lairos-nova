@@ -95,6 +95,12 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
       case 'pin':
         // PIN riportato a 0000 dal pannello: nessun avviso, si chiede subito di sceglierne uno nuovo (come alla prima installazione)
         maybeAskParentalPin(context, ref, force: true);
+      case 'kick':
+        // «Disconnetti» dal pannello: si chiude il lettore (o la visione multipla) e si torna dove si era, nessun avviso
+        {
+          final router = GoRouter.of(context);
+          if (ref.read(watchingProvider) > 0 && router.canPop()) router.pop();
+        }
       case 'relink':
         // scollegata dal fornitore: se non restano liste proprie si torna alla schermata iniziale
         context.go(ref.read(dbProvider).playlists().isEmpty ? '/import?first=1' : '/');

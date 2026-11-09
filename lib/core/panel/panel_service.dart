@@ -452,14 +452,13 @@ class PanelService extends ChangeNotifier {
       if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
       // permessi spenti dal pannello (es. «risoluzione e FPS»): valgono subito, senza aspettare la riapertura
       if (j.containsKey('ph')) _applyPerms(PanelState.parsePerms(j['ph']));
-      // «Disconnetti» dal pannello: si conferma e l'app si scollega
+      // «Disconnetti» dal pannello: come nelle altre app Kairos si interrompe la visione in corso, senza avvisi; l'abbonamento
+      // resta attivo e l'app collegata (prima Nova si scollegava: via codice e liste, e il cliente andava riattivato con un
+      // codice nuovo). La conferma (kickAck) parte col battito successivo: uno subito il pannello lo rifiuterebbe (15 s)
       final kick = (j['kick'] is num) ? (j['kick'] as num).toInt() : 0;
       if (kick > 0 && kick != _kickSeen) {
         _kickSeen = kick;
-        await c.heartbeat(state: 'idle', kickAck: kick, rcv: _rcv);
-        await unlink();
-        _emit('relink');
-        return 0;
+        if (_watching) _emit('kick');
       }
       // «Invia aggiornamento»
       final upd = (j['upd'] is num) ? (j['upd'] as num).toInt() : 0;
