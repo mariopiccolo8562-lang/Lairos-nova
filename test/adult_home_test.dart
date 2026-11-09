@@ -46,6 +46,21 @@ void main() {
       }
     });
 
+    test('titoli: stesso esito con la normalizzazione completa (nomi non ASCII) e in maiuscolo', () {
+      // l'accento combinante in coda rende il nome non ASCII (via completa) e la normalizzazione lo toglie
+      for (final s in titleTrue) {
+        expect(adultTitle('$ś'), isTrue, reason: '«$s» con un accento in coda');
+        expect(adultTitle(s.toUpperCase()), isTrue, reason: '«$s» in maiuscolo');
+      }
+      for (final s in titleFalse) {
+        expect(adultTitle('$ś'), isFalse, reason: '«$s» con un accento in coda');
+        expect(adultTitle(s.toUpperCase()), isFalse, reason: '«$s» in maiuscolo');
+      }
+      expect(adultTitle('Pornô Star'), isTrue);
+      expect(adultTitle('Éducation sexuelle'), isFalse);
+      expect(adultTitle('  PLAYBOY\t\tTV  '), isTrue);
+    });
+
     test('normalizzazione: larghezza piena, accenti, maiuscole e spazi', () {
       expect(adultNormalize('ＸＸＸ'), 'xxx');
       expect(adultNormalize('  Érotique   HD '), 'erotique hd');
