@@ -1,40 +1,98 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Indirizzo dei download (feed degli aggiornamenti e APK): l'unico da cambiare quando arriva il dominio dedicato ai
-/// download. L'app chiede `<kDlBase>/get/nova.json`, poi panel-kairos.com (saltato se è lo stesso indirizzo), poi la
-/// riserva [kNovaFeedUrl]; l'APK si scarica dai link del feed trovato: `url`, e `urlArm32` sui dispositivi a 32 bit.
-const String kDlBase = 'https://panel-kairos.com';
+/// Indirizzo dei download (feed degli aggiornamenti e APK), il dominio dedicato ai download: l'unico da cambiare.
+/// L'app chiede `<kDlBase>/get/nova.json`, poi panel-kairos.com, poi la riserva [kNovaFeedUrl]; l'APK si scarica dai
+/// link del feed che ha risposto (`url`, e `urlArm32` sui dispositivi a 32 bit) e, se non riesce, dalle basi
+/// successive e alla fine dalla release «latest» di GitHub ([apkUrls]).
+const String kDlBase = 'https://store-k.download';
 
-/// Pannello Kairos: secondo tentativo, con gli stessi percorsi `/get/<id>.json` dell'indirizzo dei download.
+/// Pannello Kairos: seconda base dei download, con gli stessi percorsi `/get/<id>.json` e `/get/<id>.apk`.
 const String kPanelBase = 'https://panel-kairos.com';
 
-/// Riserva degli aggiornamenti, solo se il pannello non risponde: feed della release «latest» su GitHub.
-/// Quando il repository diventerà privato fallirà senza danni.
+/// Riserva degli aggiornamenti, solo se dominio dei download e pannello non rispondono: feed della release «latest»
+/// su GitHub. Quando il repository diventerà privato fallirà senza danni.
 const String kNovaFeedUrl = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/kairos-nova.json';
 
-/// Feed degli aggiornamenti da provare, in ordine e senza doppioni (solo https):
-/// 1. `<dlBase>/get/<id>.json`, l'indirizzo dei download ([kDlBase], oggi il pannello);
-/// 2. il pannello [kPanelBase], stesso percorso: si salta se è lo stesso indirizzo del primo (oggi lo è);
-/// 3. [fallback], la riserva di oggi su GitHub: quando il repository diventerà privato fallirà senza danni.
-List<String> updateFeeds(String dlBase, String id, String fallback) {
+/// Ultima riserva degli APK, dopo le basi dei download: quelli della release «latest» su GitHub (64 e 32 bit).
+const String kNovaApkFallback = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/KairosNova-arm64.apk';
+const String kNovaApk32Fallback = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/KairosNova-arm32.apk';
+
+/// Basi https dei download, in ordine e senza doppioni: [dlBase] ([kDlBase]), poi il pannello [kPanelBase].
+List<String> downloadBases(String dlBase) {
   final out = <String>[];
   for (final base in [dlBase, kPanelBase]) {
     var b = base.trim();
     while (b.endsWith('/')) {
       b = b.substring(0, b.length - 1);
     }
-    final u = '$b/get/$id.json';
-    if (b.startsWith('https://') && !out.contains(u)) out.add(u);
+    if (b.startsWith('https://') && !out.contains(b)) out.add(b);
   }
+  return out;
+}
+
+/// Feed degli aggiornamenti da provare, in ordine e senza doppioni (solo https): `/get/<id>.json` su ogni base
+/// ([downloadBases]), poi [fallback], la riserva di oggi su GitHub (con il repository privato fallirà senza danni).
+List<String> updateFeeds(String dlBase, String id, String fallback) {
+  final out = [for (final b in downloadBases(dlBase)) '$b/get/$id.json'];
   final f = fallback.trim();
   if (f.startsWith('https://') && !out.contains(f)) out.add(f);
   return out;
+}
+
+/// APK da provare, in ordine: [url], il link del feed che ha risposto; poi lo stesso APK (`/get/<id>.apk`) sulle basi
+/// successive a quella del link; alla fine [ghApk], quello della release «latest» su GitHub. Un link fuori dalle basi
+/// (quello del feed di riserva di GitHub) passa direttamente a [ghApk].
+List<String> apkUrls(String url, String dlBase, String id, String ghApk) {
+  final out = <String>[];
+  if (url.startsWith('https://')) out.add(url);
+  final bases = downloadBases(dlBase);
+  final at = bases.indexWhere((b) => url.startsWith('$b/'));
+  if (at >= 0) {
+    for (final b in bases.skip(at + 1)) {
+      final u = '$b/get/$id.apk';
+      if (!out.contains(u)) out.add(u);
+    }
+  }
+  final g = ghApk.trim();
+  if (g.startsWith('https://') && !out.contains(g)) out.add(g);
+  return out;
+}
+
+/// Dove riprovare l'APK se il link del feed [url] non riesce, per la parte nativa: `alts` (64 bit: `/get/nova.apk`
+/// sulle basi successive, poi GitHub) e `alts32` (32 bit: `/get/nova-arm32.apk`, poi GitHub). L'APK a 32 bit del feed
+/// sta sulla stessa base di [url].
+Map<String, List<String>> apkAlternatives(String url, {String dlBase = kDlBase}) => {
+      'alts': [for (final u in apkUrls(url, dlBase, 'nova', kNovaApkFallback)) if (u != url) u],
+      'alts32': [for (final u in apkUrls(url, dlBase, 'nova-arm32', kNovaApk32Fallback)) if (u != url) u],
+    };
+
+/// Legge un feed con un client suo: connessione al massimo 5 s (il dominio dei download non ancora attivo fa passare in
+/// fretta al pannello), risposta al massimo 10 s e 256 KB. Il JSON se la risposta è 200, altrimenti null; HTML o JSON
+/// rotto: FormatException (si prova il feed successivo).
+Future<Object?> fetchFeedJson(Uri uri, {String userAgent = 'KairosNova'}) async {
+  final client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 5)
+    ..userAgent = userAgent;
+  try {
+    final request = await client.getUrl(uri).timeout(const Duration(seconds: 10));
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    final response = await request.close().timeout(const Duration(seconds: 10));
+    if (response.statusCode != HttpStatus.ok) return null;
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.timeout(const Duration(seconds: 10))) {
+      bytes.add(chunk);
+      if (bytes.length > 256 * 1024) return null;
+    }
+    return jsonDecode(utf8.decode(bytes.takeBytes(), allowMalformed: true));
+  } finally {
+    client.close(force: true);
+  }
 }
 
 /// Numero di build del feed (versionCode), 0 se manca.
@@ -119,14 +177,15 @@ class NovaNative {
   }
   static Future<Map<String, dynamic>> updateStatus(int code) => _call('updateStatus', {'code': code});
   static Future<void> updatePrefetch(String url, int code, {String url32 = ''}) =>
-      _call('updatePrefetch', {'url': url, 'code': code, 'url32': url32});
+      _call('updatePrefetch', {'url': url, 'code': code, 'url32': url32, ...apkAlternatives(url)});
   static Future<void> updateInstall(String url, int code, {String url32 = ''}) =>
-      _call('updateInstall', {'url': url, 'code': code, 'url32': url32});
+      _call('updateInstall', {'url': url, 'code': code, 'url32': url32, ...apkAlternatives(url)});
 }
 
 /// Aggiornamento dell'app.
-/// - Controllo all'avvio e ogni ora: feed del pannello (`/get/nova.json`, vedi [updateFeeds]) e, solo se il pannello
-///   non risponde, feed della release più recente su GitHub.
+/// - Controllo all'avvio e ogni ora: feed del dominio dei download (store-k.download), poi del pannello
+///   (`/get/nova.json`, vedi [updateFeeds]) e, solo se nessuno dei due risponde bene, della release «latest» su GitHub.
+///   Se l'APK non si scarica dal link del feed, la parte nativa prova le basi successive e GitHub ([apkAlternatives]).
 /// - Aggiornamento in background (scelta del cliente o imposta dal fornitore, acceso di serie): l'APK si scarica
 ///   e si verifica in silenzio (solo su Wi-Fi o cavo, mai durante la visione); quando è pronto si propone
 ///   «Installa ora» e al cliente resta solo la conferma di Android.
@@ -150,10 +209,10 @@ class AppUpdater extends ChangeNotifier {
   /// Visione in corso: niente download non richiesti e niente finestre.
   final bool Function() watching;
 
-  /// Lettura di un feed (le prove la sostituiscono); null = rete, al massimo 12 secondi per tentativo.
+  /// Lettura di un feed (le prove la sostituiscono); null = rete ([fetchFeedJson]).
   final Future<Object?> Function(Uri uri)? fetchFeed;
 
-  /// Feed da provare in ordine: pannello prima, GitHub di riserva.
+  /// Feed da provare in ordine: dominio dei download, pannello, GitHub di riserva.
   static final List<String> feeds = updateFeeds(kDlBase, 'nova', kNovaFeedUrl);
 
   StreamSubscription<Map<String, dynamic>>? _sub;
@@ -335,8 +394,8 @@ class AppUpdater extends ChangeNotifier {
     await NovaNative.updateInstall(u.url, u.code, url32: u.url32);
   }
 
-  /// Feed: pannello prima ([feeds]), GitHub solo se il pannello non risponde, risponde con un errore o con un JSON non
-  /// valido. La politica pubblica (in background sì/no, obbligatorio dopo N giorni) vale se il feed la porta («policy»),
+  /// Feed: dominio dei download, poi pannello ([feeds]); GitHub solo se nessuno dei due risponde con un feed valido.
+  /// La politica pubblica (in background sì/no, obbligatorio dopo N giorni) vale se il feed la porta («policy»),
   /// altrimenti resta l'ultima salvata; quella del fornitore per questo dispositivo arriva col battito.
   Future<Map<String, dynamic>?> _fetchFeed() async {
     final feed = await firstFeed(feeds, fetchFeed ?? _getJson);
@@ -345,12 +404,8 @@ class AppUpdater extends ChangeNotifier {
     return {'apk': feed, 'policy': pol is Map ? pol : _policy};
   }
 
-  /// Un feed dalla rete: il JSON se la risposta è 200, altrimenti null (si prova il feed successivo).
-  Future<Object?> _getJson(Uri uri) async {
-    final ua = {'User-Agent': 'KairosNova/$currentVersion', 'Accept': 'application/json'};
-    final r = await http.get(uri, headers: ua).timeout(const Duration(seconds: 12));
-    return r.statusCode == 200 ? jsonDecode(r.body) : null;
-  }
+  /// Un feed dalla rete ([fetchFeedJson]), con la versione installata nel nome dell'app.
+  Future<Object?> _getJson(Uri uri) => fetchFeedJson(uri, userAgent: 'KairosNova/$currentVersion');
 
   Future<void> _firstSeen(UpdateInfo u) async {
     final parts = _first.split(':');

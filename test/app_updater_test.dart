@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -101,36 +102,57 @@ void main() {
     u.dispose();
   });
 
-  group('Feed degli aggiornamenti: pannello prima, GitHub solo di riserva', () {
+  group('Feed degli aggiornamenti: store-k.download, poi il pannello, poi GitHub', () {
+    const dlFeed = 'https://store-k.download/get/nova.json';
     const panel = 'https://panel-kairos.com/get/nova.json';
+    const dlApk = 'https://store-k.download/get/nova.apk';
+    const dlApk32 = 'https://store-k.download/get/nova-arm32.apk';
     const panelApk = 'https://panel-kairos.com/get/nova.apk';
     const panelApk32 = 'https://panel-kairos.com/get/nova-arm32.apk';
-    const ghApk = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/KairosNova-arm64.apk';
-    const ghApk32 = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/KairosNova-arm32.apk';
+    const ghApk = kNovaApkFallback;
+    const ghApk32 = kNovaApk32Fallback;
     final ghFeed = <String, Object?>{'version': '1.0.19', 'versionCode': 19, 'url': ghApk, 'urlArm32': ghApk32};
 
-    test('ordine: indirizzo dei download, pannello (saltato se uguale), GitHub', () {
-      // oggi l'indirizzo dei download è il pannello: il secondo tentativo, uguale al primo, si salta
-      expect(AppUpdater.feeds, [panel, kNovaFeedUrl]);
-      expect(updateFeeds('https://panel-kairos.com/', 'nova', kNovaFeedUrl), [panel, kNovaFeedUrl]);
-      expect(updateFeeds('https://dl.example.com', 'nova', kNovaFeedUrl), ['https://dl.example.com/get/nova.json', panel, kNovaFeedUrl]);
+    test('ordine delle basi: dominio dei download, pannello (saltato se uguale), GitHub', () {
+      expect(kDlBase, 'https://store-k.download');
+      expect(AppUpdater.feeds, [dlFeed, panel, kNovaFeedUrl]);
+      expect(updateFeeds('https://store-k.download/', 'nova', kNovaFeedUrl), [dlFeed, panel, kNovaFeedUrl]);
+      expect(updateFeeds('https://panel-kairos.com', 'nova', kNovaFeedUrl), [panel, kNovaFeedUrl]);
       expect(updateFeeds('', 'nova', ''), [panel]);
     });
 
-    test('con il pannello che risponde GitHub non si chiede', () async {
+    test('APK: link del feed, poi le basi successive, alla fine GitHub (64 e 32 bit)', () {
+      expect(apkUrls(dlApk, kDlBase, 'nova', ghApk), [dlApk, panelApk, ghApk]);
+      expect(apkAlternatives(dlApk), {
+        'alts': [panelApk, ghApk],
+        'alts32': [panelApk32, ghApk32],
+      });
+      // feed dal pannello (dominio dei download giù): il dominio dei download non si riprova
+      expect(apkAlternatives(panelApk), {
+        'alts': [ghApk],
+        'alts32': [ghApk32],
+      });
+      // feed di riserva di GitHub: solo GitHub
+      expect(apkAlternatives(ghApk), {
+        'alts': <String>[],
+        'alts32': [ghApk32],
+      });
+    });
+
+    test('con la prima base che risponde le altre non si chiedono', () async {
       final asked = <String>[];
       final f = await firstFeed(AppUpdater.feeds, (uri) async {
         asked.add('$uri');
-        return <String, Object?>{'version': '1.0.23', 'versionCode': 23, 'url': panelApk, 'urlArm32': panelApk32};
+        return <String, Object?>{'version': '1.0.23', 'versionCode': 23, 'url': dlApk, 'urlArm32': dlApk32};
       });
-      expect(f?['versionCode'], 23);
-      expect(f?['urlArm32'], panelApk32);
-      expect(asked, [panel]); // nessun controllo in più del solito
+      expect(f?['urlArm32'], dlApk32);
+      expect(asked, [dlFeed]);
     });
 
-    test('pannello muto, con errore o con un JSON non valido → riserva GitHub', () async {
+    test('dominio dei download non attivo o parcheggiato, pannello con errore o JSON non valido → riserva GitHub', () async {
       final failures = <Future<Object?> Function()>[
-        () async => throw Exception('nessuna risposta'),
+        () async => throw const SocketException('Failed host lookup: store-k.download'),
+        () async => throw const FormatException('<!DOCTYPE html>'), // pagina parcheggiata
         () async => null, // risposta diversa da 200 (es. 502)
         () async => <String, Object?>{'error': 'non disponibile'},
         () async => 'pagina di errore',
@@ -144,7 +166,7 @@ void main() {
           return fail();
         });
         expect(f?['url'], ghApk);
-        expect(asked, [panel, kNovaFeedUrl]);
+        expect(asked, [dlFeed, panel, kNovaFeedUrl]);
       }
     });
 
@@ -152,13 +174,14 @@ void main() {
       expect(await firstFeed(AppUpdater.feeds, (_) async => null), isNull);
     });
 
-    test('dal pannello: il link dell\'APK e quello a 32 bit (urlArm32) passano alla parte nativa e restano salvati', () async {
+    test('dal pannello: link dell\'APK, urlArm32 e riserve passano alla parte nativa; il link a 32 bit resta salvato', () async {
       apkReady = false;
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
       final asked = <String>[];
       final u = AppUpdater(prefs, watching: () => false, fetchFeed: (uri) async {
         asked.add('$uri');
+        if (uri.host == 'store-k.download') throw const SocketException('Failed host lookup: store-k.download');
         return <String, Object?>{'version': '1.0.19', 'versionCode': 19, 'url': panelApk, 'urlArm32': panelApk32};
       });
       u.currentCode = 18;
@@ -167,26 +190,40 @@ void main() {
       expect(found?.code, 19);
       expect(found?.url, panelApk);
       expect(found?.url32, panelApk32);
-      expect(asked, [panel]);
-      expect(calls.where((c) => c.method == 'updatePrefetch').single.arguments, {'url': panelApk, 'code': 19, 'url32': panelApk32});
+      expect(asked, [dlFeed, panel]);
+      expect(calls.where((c) => c.method == 'updatePrefetch').single.arguments, {
+        'url': panelApk,
+        'code': 19,
+        'url32': panelApk32,
+        'alts': [ghApk],
+        'alts32': [ghApk32],
+      });
       // riaperta l'app (anche senza rete) il link a 32 bit c'è ancora
       final again = AppUpdater(prefs, watching: () => false);
       await again.start();
       expect(again.pending?.code, 19);
       expect(again.pending?.url32, panelApk32);
+      await again.install();
+      expect(calls.where((c) => c.method == 'updateInstall').single.arguments, {
+        'url': panelApk,
+        'code': 19,
+        'url32': panelApk32,
+        'alts': [ghApk],
+        'alts32': [ghApk32],
+      });
       await settle();
       u.dispose();
       again.dispose();
     });
 
-    test('pannello giù: versione e link (anche a 32 bit) dalla riserva GitHub', () async {
+    test('dominio dei download e pannello giù: versione e link (anche a 32 bit) dalla riserva GitHub', () async {
       apkReady = false;
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
       final asked = <String>[];
       final u = AppUpdater(prefs, watching: () => false, fetchFeed: (uri) async {
         asked.add('$uri');
-        if (uri.host == 'panel-kairos.com') return null;
+        if (uri.host != 'github.com') return null;
         return ghFeed;
       });
       u.currentCode = 18;
@@ -194,8 +231,14 @@ void main() {
       final found = await u.check();
       expect(found?.url, ghApk);
       expect(found?.url32, ghApk32);
-      expect(asked, [panel, kNovaFeedUrl]);
-      expect(calls.where((c) => c.method == 'updatePrefetch').single.arguments, {'url': ghApk, 'code': 19, 'url32': ghApk32});
+      expect(asked, [dlFeed, panel, kNovaFeedUrl]);
+      expect(calls.where((c) => c.method == 'updatePrefetch').single.arguments, {
+        'url': ghApk,
+        'code': 19,
+        'url32': ghApk32,
+        'alts': <String>[],
+        'alts32': [ghApk32],
+      });
       u.dispose();
     });
 
@@ -211,6 +254,55 @@ void main() {
       expect(u.message, 'Impossibile controllare gli aggiornamenti adesso');
       await settle();
       u.dispose();
+    });
+  });
+
+  group('Feed dalla rete (server locale)', () {
+    late HttpServer server;
+    final routes = <String, Object>{};
+
+    setUpAll(() async {
+      HttpOverrides.global = null; // client HTTP vero verso il server locale di prova
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) {
+        final body = routes[request.uri.path];
+        if (body is int) {
+          request.response.statusCode = body;
+        } else if (body is String) {
+          request.response.add(utf8.encode(body));
+        }
+        request.response.close();
+      });
+    });
+
+    tearDownAll(() async {
+      await server.close(force: true);
+    });
+
+    String at(String path) => 'http://127.0.0.1:${server.port}$path';
+
+    test('vale solo una risposta 200 con il JSON del feed: HTML parcheggiato, JSON rotto o errore → base successiva', () async {
+      routes['/ok'] = '{"version":"1.0.23","versionCode":23,"url":"https://store-k.download/get/nova.apk","urlArm32":"https://store-k.download/get/nova-arm32.apk"}';
+      routes['/parcheggiato'] = '<!DOCTYPE html><html><body>Questo dominio è in vendita</body></html>';
+      routes['/rotto'] = '{"version":';
+      routes['/campi'] = '{"version":"1.0.23"}';
+      routes['/errore'] = 502;
+      await expectLater(fetchFeedJson(Uri.parse(at('/parcheggiato'))), throwsA(isA<FormatException>()));
+      expect(await fetchFeedJson(Uri.parse(at('/errore'))), isNull);
+      final f = await firstFeed([at('/parcheggiato'), at('/rotto'), at('/campi'), at('/errore'), at('/ok')], fetchFeedJson);
+      expect(f?['versionCode'], 23);
+      expect(f?['urlArm32'], 'https://store-k.download/get/nova-arm32.apk');
+    });
+
+    test('indirizzo che non risponde (connessione rifiutata): si passa subito al successivo', () async {
+      routes['/ok'] = '{"version":"1.0.23","versionCode":23,"url":"https://panel-kairos.com/get/nova.apk"}';
+      final closed = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = closed.port;
+      await closed.close();
+      final watch = Stopwatch()..start();
+      final f = await firstFeed(['http://127.0.0.1:$port/get/nova.json', at('/ok')], fetchFeedJson);
+      expect(f?['versionCode'], 23);
+      expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
     });
   });
 }
