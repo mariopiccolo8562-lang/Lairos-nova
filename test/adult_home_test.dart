@@ -121,7 +121,9 @@ void main() {
       final clean = [row[0], row[4]];
       expect(identical(rules.homeItems(clean), clean), isTrue);
       expect(rules.blocked(row[1]), isTrue);
-      expect(rules.blocked(row[1]), isTrue); // seconda richiesta: esito già calcolato
+      // le righe si rileggono dal database (oggetti nuovi): stesso esito, già calcolato per quel nome
+      expect(rules.blocked(ch(20, 'Brazzers TV', 'Intrattenimento')), isTrue);
+      expect(rules.blocked(ch(21, 'Rai 1', 'Intrattenimento')), isFalse);
     });
 
     test('titolo in evidenza: mai per adulti; se da riprendere c\'erano solo canali per adulti si sceglie fra gli altri', () {

@@ -87,10 +87,16 @@ bool adultCat(String name) => _adultCategory.hasMatch(adultNormalize(name).repla
 /// Titolo o canale per adulti: solo le parole forti (un film come «Sex Education» resta dov'è).
 bool adultTitle(String name) => _adultTitle.hasMatch(adultNormalize(name));
 
-/// Esito di [adultTitle] per ogni canale, film o serie, calcolato una volta sola per oggetto.
-final Expando<bool> _strongTitle = Expando<bool>('titolo per adulti');
+/// Esito di [adultTitle] per nome, calcolato una volta sola: le righe della Home si rileggono dal database (oggetti
+/// nuovi a ogni lettura, anche a ogni canale che parte durante la visione), i nomi restano gli stessi.
+final Map<String, bool> _strongTitle = <String, bool>{};
 
-bool _titleOf(Channel c) => _strongTitle[c] ??= adultTitle(c.name);
+bool _titleOf(Channel c) {
+  final known = _strongTitle[c.name];
+  if (known != null) return known;
+  if (_strongTitle.length > 5000) _strongTitle.clear();
+  return _strongTitle[c.name] = adultTitle(c.name);
+}
 
 /// Home decisa dal fornitore (Controllo remoto del pannello): gruppi in primo piano (rc «home.top») e nascosti
 /// dalla Home (rc «home.hide»). Ogni voce è un nome o una parte di nome; maiuscole, accenti e spazi doppi non
