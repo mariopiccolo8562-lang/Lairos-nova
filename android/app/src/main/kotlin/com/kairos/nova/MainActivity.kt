@@ -63,13 +63,15 @@ class MainActivity : FlutterActivity() {
                 "updatePrefetch" -> {
                     val url = call.argument<String>("url") ?: ""
                     val code = (call.argument<Number>("code") ?: 0).toInt()
-                    if (url.startsWith("https://") && code > 0) Updater.prefetch(this, url, code)
+                    val url32 = call.argument<String>("url32") ?: "" // «urlArm32» del feed: APK per Android a 32 bit
+                    if (url.startsWith("https://") && code > 0) Updater.prefetch(this, url, code, url32)
                     result.success(true)
                 }
                 "updateInstall" -> {
                     val url = call.argument<String>("url") ?: ""
                     val code = (call.argument<Number>("code") ?: 0).toInt()
-                    if (url.startsWith("https://") && code > 0) Updater.install(this, url, code)
+                    val url32 = call.argument<String>("url32") ?: ""
+                    if (url.startsWith("https://") && code > 0) Updater.install(this, url, code, url32)
                     result.success(true)
                 }
                 else -> result.notImplemented()

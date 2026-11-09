@@ -72,24 +72,34 @@ object Updater {
     )
 
     /**
-     * APK adatto al dispositivo. Il feed indica la versione a 64 bit, ma le chiavette Fire TV e i box vecchi hanno Android
-     * a 32 bit e non la installano («App non installata», anche con l'aggiornamento obbligatorio che blocca l'app): lì si
-     * scarica la versione a 32 bit della stessa release, che il workflow pubblica sempre insieme.
+     * APK adatto al dispositivo. Il feed indica la versione a 64 bit («url»), ma le chiavette Fire TV e i box vecchi hanno
+     * Android a 32 bit e non la installano («App non installata», anche con l'aggiornamento obbligatorio che blocca l'app):
+     * lì si scarica la versione a 32 bit della stessa release («urlArm32» del feed, [url32]), che il workflow pubblica
+     * sempre insieme.
      */
-    fun apkFor(url: String): String = abiUrl(url, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty())
+    fun apkFor(url: String, url32: String = ""): String = abiUrl(url, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty(), url32)
 
-    /** logica di [apkFor]: [has64] = il dispositivo esegue app a 64 bit */
-    fun abiUrl(url: String, has64: Boolean): String =
-        if (!has64 && url.endsWith("/KairosNova-arm64.apk")) url.removeSuffix("KairosNova-arm64.apk") + "KairosNova-arm32.apk" else url
+    /**
+     * logica di [apkFor]: [has64] = il dispositivo esegue app a 64 bit; [url32] = «urlArm32» del feed, vuoto se manca.
+     * Senza urlArm32 il link a 32 bit si ricava dal nome: GitHub KairosNova-arm64.apk → KairosNova-arm32.apk,
+     * pannello /get/nova.apk → /get/nova-arm32.apk.
+     */
+    fun abiUrl(url: String, has64: Boolean, url32: String = ""): String = when {
+        has64 -> url
+        url32.startsWith("https://") -> url32
+        url.endsWith("/KairosNova-arm64.apk") -> url.removeSuffix("KairosNova-arm64.apk") + "KairosNova-arm32.apk"
+        url.endsWith("/get/nova.apk") -> url.removeSuffix("nova.apk") + "nova-arm32.apk"
+        else -> url
+    }
 
     /** scaricamento in background: nessuna finestra; evento ready | failed */
-    fun prefetch(ctx: Context, url: String, code: Int) {
+    fun prefetch(ctx: Context, url: String, code: Int, url32: String = "") {
         if (ready(ctx, code)) { event("ready") { put("code", code) }; return }
         if (!busy.compareAndSet(false, true)) return
         thread(name = "kx-apk-bg") {
             try {
                 val out = fileFor(ctx, code)
-                fetch(ctx, apkFor(url), out, null)
+                fetch(ctx, apkFor(url, url32), out, null)
                 readyFile = out; readyCode = code
                 cleanOld(ctx, out)
                 event("ready") { put("code", code) }
@@ -100,13 +110,13 @@ object Updater {
     }
 
     /** installa: subito se l'APK è pronto, altrimenti lo scarica (eventi progress) e poi apre l'installer */
-    fun install(a: Activity, url: String, code: Int) {
+    fun install(a: Activity, url: String, code: Int, url32: String = "") {
         if (ready(a, code)) { launch(a, readyFile!!); return }
         if (!busy.compareAndSet(false, true)) { event("busy"); return }
         thread(name = "kx-apk") {
             try {
                 val out = fileFor(a, code)
-                fetch(a, apkFor(url), out) { p -> event("progress") { put("p", p) } }
+                fetch(a, apkFor(url, url32), out) { p -> event("progress") { put("p", p) } }
                 readyFile = out; readyCode = code
                 cleanOld(a, out)
                 event("progress") { put("p", 100) }

@@ -6,18 +6,68 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Pannello Kairos: dice qual è l'ultima versione (feed della release) e la politica degli aggiornamenti
-/// decisa dal fornitore (in background sì/no, obbligatorio dopo N giorni). Se non risponde si legge il feed
-/// direttamente da GitHub e si tiene l'ultima politica salvata.
-const String kPanelUpdateUrl = 'https://kairos-panel.mariopiccolo8562.workers.dev/api/player/update';
+/// Indirizzo dei download (feed degli aggiornamenti e APK): l'unico da cambiare quando arriva il dominio dedicato ai
+/// download. L'app chiede `<kDlBase>/get/nova.json`, poi panel-kairos.com (saltato se è lo stesso indirizzo), poi la
+/// riserva [kNovaFeedUrl]; l'APK si scarica dai link del feed trovato: `url`, e `urlArm32` sui dispositivi a 32 bit.
+const String kDlBase = 'https://panel-kairos.com';
+
+/// Pannello Kairos: secondo tentativo, con gli stessi percorsi `/get/<id>.json` dell'indirizzo dei download.
+const String kPanelBase = 'https://panel-kairos.com';
+
+/// Riserva degli aggiornamenti, solo se il pannello non risponde: feed della release «latest» su GitHub.
+/// Quando il repository diventerà privato fallirà senza danni.
 const String kNovaFeedUrl = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/kairos-nova.json';
+
+/// Feed degli aggiornamenti da provare, in ordine e senza doppioni (solo https):
+/// 1. `<dlBase>/get/<id>.json`, l'indirizzo dei download ([kDlBase], oggi il pannello);
+/// 2. il pannello [kPanelBase], stesso percorso: si salta se è lo stesso indirizzo del primo (oggi lo è);
+/// 3. [fallback], la riserva di oggi su GitHub: quando il repository diventerà privato fallirà senza danni.
+List<String> updateFeeds(String dlBase, String id, String fallback) {
+  final out = <String>[];
+  for (final base in [dlBase, kPanelBase]) {
+    var b = base.trim();
+    while (b.endsWith('/')) {
+      b = b.substring(0, b.length - 1);
+    }
+    final u = '$b/get/$id.json';
+    if (b.startsWith('https://') && !out.contains(u)) out.add(u);
+  }
+  final f = fallback.trim();
+  if (f.startsWith('https://') && !out.contains(f)) out.add(f);
+  return out;
+}
+
+/// Numero di build del feed (versionCode), 0 se manca.
+int feedCode(Map<dynamic, dynamic> m) =>
+    (m['versionCode'] is num) ? (m['versionCode'] as num).toInt() : int.tryParse('${m['versionCode']}') ?? 0;
+
+/// Primo feed valido (versionCode riconosciuto e APK in https) nell'ordine di [feeds]: si passa al successivo solo se
+/// quello prima non risponde, risponde con un errore o con un JSON non valido, così con il pannello che funziona la
+/// richiesta resta una sola. null = nessuno ha risposto bene (come una rete giù: si riprova più tardi).
+Future<Map<String, dynamic>?> firstFeed(List<String> feeds, Future<Object?> Function(Uri uri) fetch) async {
+  for (final f in feeds) {
+    try {
+      final j = await fetch(Uri.parse(f));
+      if (j is Map && feedCode(j) > 0 && (j['url'] ?? '').toString().startsWith('https://')) {
+        return Map<String, dynamic>.from(j);
+      }
+    } catch (_) {
+      // nessuna risposta, errore HTTP o risposta illeggibile: si prova il feed successivo
+    }
+  }
+  return null;
+}
 
 /// Versione nuova trovata.
 class UpdateInfo {
-  const UpdateInfo({required this.code, required this.version, required this.url});
+  const UpdateInfo({required this.code, required this.version, required this.url, this.url32 = ''});
   final int code;
   final String version;
   final String url;
+
+  /// APK a 32 bit della stessa versione («urlArm32» del feed), per le chiavette e i box con Android a 32 bit;
+  /// vuoto se il feed non lo indica (la parte nativa lo ricava allora dal nome di [url]).
+  final String url32;
 }
 
 /// Ponte con la parte nativa (MainActivity.kt / Updater.kt): versione installata, download e installazione dell'APK.
@@ -68,12 +118,15 @@ class NovaNative {
     return r;
   }
   static Future<Map<String, dynamic>> updateStatus(int code) => _call('updateStatus', {'code': code});
-  static Future<void> updatePrefetch(String url, int code) => _call('updatePrefetch', {'url': url, 'code': code});
-  static Future<void> updateInstall(String url, int code) => _call('updateInstall', {'url': url, 'code': code});
+  static Future<void> updatePrefetch(String url, int code, {String url32 = ''}) =>
+      _call('updatePrefetch', {'url': url, 'code': code, 'url32': url32});
+  static Future<void> updateInstall(String url, int code, {String url32 = ''}) =>
+      _call('updateInstall', {'url': url, 'code': code, 'url32': url32});
 }
 
 /// Aggiornamento dell'app.
-/// - Controllo all'avvio e ogni ora (feed della release più recente, via pannello Kairos).
+/// - Controllo all'avvio e ogni ora: feed del pannello (`/get/nova.json`, vedi [updateFeeds]) e, solo se il pannello
+///   non risponde, feed della release più recente su GitHub.
 /// - Aggiornamento in background (scelta del cliente o imposta dal fornitore, acceso di serie): l'APK si scarica
 ///   e si verifica in silenzio (solo su Wi-Fi o cavo, mai durante la visione); quando è pronto si propone
 ///   «Installa ora» e al cliente resta solo la conferma di Android.
@@ -82,7 +135,7 @@ class NovaNative {
 /// - La versione trovata (codice, versione, link, APK già pronto) e la politica del fornitore restano salvate sul
 ///   dispositivo: all'avvio il blocco obbligatorio vale subito, anche senza rete e prima del controllo in rete.
 class AppUpdater extends ChangeNotifier {
-  AppUpdater(this._prefs, {required this.watching}) {
+  AppUpdater(this._prefs, {required this.watching, this.fetchFeed}) {
     _sub = NovaNative.updateEvents.listen(_onEvent);
     _bgLocal = _prefs.getBool('bg_update') ?? true;
     _policy = _decodePolicy(_prefs.getString('upd_policy'));
@@ -96,6 +149,12 @@ class AppUpdater extends ChangeNotifier {
 
   /// Visione in corso: niente download non richiesti e niente finestre.
   final bool Function() watching;
+
+  /// Lettura di un feed (le prove la sostituiscono); null = rete, al massimo 12 secondi per tentativo.
+  final Future<Object?> Function(Uri uri)? fetchFeed;
+
+  /// Feed da provare in ordine: pannello prima, GitHub di riserva.
+  static final List<String> feeds = updateFeeds(kDlBase, 'nova', kNovaFeedUrl);
 
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _timer;
@@ -228,8 +287,10 @@ class AppUpdater extends ChangeNotifier {
       }
       final m = apk is Map ? apk : const {};
       final version = (m['version'] ?? '').toString().replaceFirst(RegExp(r'^v'), '');
-      final code = (m['versionCode'] is num) ? (m['versionCode'] as num).toInt() : int.tryParse('${m['versionCode']}') ?? 0;
-      final url = (m['url'] ?? '').toString();
+      final code = feedCode(m);
+      final url = (m['url'] ?? '').toString(); // l'APK si scarica da qui (dal pannello, se il feed è il suo)
+      final arm32 = (m['urlArm32'] ?? '').toString();
+      final url32 = arm32.startsWith('https://') ? arm32 : '';
       if (code <= currentCode || !url.startsWith('https://')) {
         pending = null;
         ready = false;
@@ -238,7 +299,7 @@ class AppUpdater extends ChangeNotifier {
         notifyListeners();
         return null;
       }
-      final u = UpdateInfo(code: code, version: version, url: url);
+      final u = UpdateInfo(code: code, version: version, url: url, url32: url32);
       if (pending?.code != code) {
         ready = false;
         _failed = 0;
@@ -252,7 +313,7 @@ class AppUpdater extends ChangeNotifier {
       _savePending();
       final metered = st['metered'] == true;
       if (!ready && !manual && (bgUpdate || force) && (force || !metered) && !watching() && _failed < 3) {
-        await NovaNative.updatePrefetch(url, code); // l'esito arriva con l'evento ready | failed
+        await NovaNative.updatePrefetch(url, code, url32: url32); // l'esito arriva con l'evento ready | failed
       } else {
         _maybeOffer(manual: manual);
       }
@@ -271,27 +332,24 @@ class AppUpdater extends ChangeNotifier {
     message = null;
     progress = ready ? 100 : 0;
     notifyListeners();
-    await NovaNative.updateInstall(u.url, u.code);
+    await NovaNative.updateInstall(u.url, u.code, url32: u.url32);
   }
 
-  /// Feed + politica dal pannello; se non risponde, feed diretto da GitHub e politica salvata.
+  /// Feed: pannello prima ([feeds]), GitHub solo se il pannello non risponde, risponde con un errore o con un JSON non
+  /// valido. La politica pubblica (in background sì/no, obbligatorio dopo N giorni) vale se il feed la porta («policy»),
+  /// altrimenti resta l'ultima salvata; quella del fornitore per questo dispositivo arriva col battito.
   Future<Map<String, dynamic>?> _fetchFeed() async {
+    final feed = await firstFeed(feeds, fetchFeed ?? _getJson);
+    if (feed == null) return null;
+    final pol = feed['policy'];
+    return {'apk': feed, 'policy': pol is Map ? pol : _policy};
+  }
+
+  /// Un feed dalla rete: il JSON se la risposta è 200, altrimenti null (si prova il feed successivo).
+  Future<Object?> _getJson(Uri uri) async {
     final ua = {'User-Agent': 'KairosNova/$currentVersion', 'Accept': 'application/json'};
-    try {
-      final r = await http.get(Uri.parse(kPanelUpdateUrl), headers: ua).timeout(const Duration(seconds: 12));
-      if (r.statusCode == 200) {
-        final j = jsonDecode(r.body);
-        if (j is Map && j['apk'] is Map) return Map<String, dynamic>.from(j);
-      }
-    } catch (_) {}
-    try {
-      final r = await http.get(Uri.parse(kNovaFeedUrl), headers: ua).timeout(const Duration(seconds: 12));
-      if (r.statusCode == 200) {
-        final j = jsonDecode(r.body);
-        if (j is Map) return {'apk': Map<String, dynamic>.from(j), 'policy': _policy};
-      }
-    } catch (_) {}
-    return null;
+    final r = await http.get(uri, headers: ua).timeout(const Duration(seconds: 12));
+    return r.statusCode == 200 ? jsonDecode(r.body) : null;
   }
 
   Future<void> _firstSeen(UpdateInfo u) async {
@@ -333,7 +391,7 @@ class AppUpdater extends ChangeNotifier {
     if (u == null) {
       _prefs.remove(_kPending);
     } else {
-      _prefs.setString(_kPending, jsonEncode({'code': u.code, 'version': u.version, 'url': u.url, 'ready': ready}));
+      _prefs.setString(_kPending, jsonEncode({'code': u.code, 'version': u.version, 'url': u.url, 'url32': u.url32, 'ready': ready}));
     }
   }
 
@@ -347,7 +405,13 @@ class AppUpdater extends ChangeNotifier {
         final code = j['code'] is num ? (j['code'] as num).toInt() : 0;
         final url = (j['url'] ?? '').toString();
         if (code > currentCode && url.startsWith('https://')) {
-          pending = UpdateInfo(code: code, version: (j['version'] ?? '').toString(), url: url);
+          final url32 = (j['url32'] ?? '').toString();
+          pending = UpdateInfo(
+            code: code,
+            version: (j['version'] ?? '').toString(),
+            url: url,
+            url32: url32.startsWith('https://') ? url32 : '',
+          );
           ready = j['ready'] == true;
           return;
         }
