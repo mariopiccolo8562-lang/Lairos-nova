@@ -435,7 +435,6 @@ class PanelService extends ChangeNotifier {
         if (engine != null) ...engine.panelStats() else 'line': StreamEngine.savedLine(_prefs),
         'dev': _dev,
       };
-      final sentAt = _clock.elapsedMilliseconds;
       final call = c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
       _beatCall = call;
       final r = await call.whenComplete(() {
@@ -448,7 +447,9 @@ class PanelService extends ChangeNotifier {
       }
       final j = r.status == 200 ? r.body : null;
       if (j == null) return -1;
-      _lastOk = sentAt;
+      // il limite dei 15 s si conta dalla risposta: dalla partenza, un battito arrivato più in fretta del precedente cadeva
+      // prima dei 15 s e il pannello lo rifiutava (429)
+      _lastOk = _clock.elapsedMilliseconds;
       if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
       // permessi spenti dal pannello (es. «risoluzione e FPS»): valgono subito, senza aspettare la riapertura
       if (j.containsKey('ph')) _applyPerms(PanelState.parsePerms(j['ph']));
