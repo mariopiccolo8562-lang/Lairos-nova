@@ -1,0 +1,28 @@
+name: Prove del ramo controllo-app
+
+# Solo controllo del codice e test sul ramo di lavoro: niente APK, niente firma, niente artefatti, niente release.
+# Dopo l'unione in main si può cancellare (su main non parte comunque).
+on:
+  push:
+    branches: [controllo-app]
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # come nella compilazione su main: gli avvisi già presenti non fermano, gli errori sì
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - run: flutter test
