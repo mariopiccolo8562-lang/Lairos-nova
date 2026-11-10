@@ -6,7 +6,7 @@ Player IPTV per **Android, iOS e Android TV** con interfaccia futuristica stile 
 
 📦 **APK pronto:** scheda [Releases → latest](../../releases/tag/latest) (si rigenera a ogni push su `main`).
 
-**Aggiornamenti:** l'app li chiede a `https://store-k.download/get/nova.json` (indirizzo dei download `kDlBase` in `lib/core/update/app_updater.dart`), poi al pannello `https://panel-kairos.com/get/nova.json`, e scarica l'APK dal link del feed (`urlArm32` sui dispositivi a 32 bit; se non riesce, dalle basi successive e alla fine dalla release `latest`); solo se nessuno dei due risponde legge `kairos-nova.json` della release `latest` (riserva finché il repository è pubblico).
+**Aggiornamenti:** l'app li chiede solo a `https://store-k.download/get/nova.json` (indirizzo dei download `kDlBase` in `lib/core/update/app_updater.dart`) e scarica l'APK dal link del feed (`urlArm32` sui dispositivi a 32 bit); niente pannello né GitHub. Se il dominio non risponde prova le riserve con gli stessi percorsi: `kDlBase2` (variabile `KAIROS_DL_BASE2` del repository, passata dal workflow con `--dart-define`; vuota finché non c'è un secondo dominio) e i domini che il feed annuncia in `mirrors` (la lista `DL_HOSTS` del pannello: l'app li ricorda, così un dominio di riserva comprato dopo arriva anche alle app già installate).
 
 ---
 
