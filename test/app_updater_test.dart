@@ -102,46 +102,84 @@ void main() {
     u.dispose();
   });
 
-  group('Feed degli aggiornamenti: store-k.download, poi il pannello, poi GitHub', () {
+  group('Feed degli aggiornamenti: store-k.download, poi le riserve (niente pannello né GitHub)', () {
     const dlFeed = 'https://store-k.download/get/nova.json';
-    const panel = 'https://panel-kairos.com/get/nova.json';
     const dlApk = 'https://store-k.download/get/nova.apk';
     const dlApk32 = 'https://store-k.download/get/nova-arm32.apk';
-    const panelApk = 'https://panel-kairos.com/get/nova.apk';
-    const panelApk32 = 'https://panel-kairos.com/get/nova-arm32.apk';
-    const ghApk = kNovaApkFallback;
-    const ghApk32 = kNovaApk32Fallback;
-    final ghFeed = <String, Object?>{'version': '1.0.19', 'versionCode': 19, 'url': ghApk, 'urlArm32': ghApk32};
+    const res = 'https://riserva-k.download';
+    const res2 = 'https://riserva2-k.download';
+    const resFeed = '$res/get/nova.json';
+    const resApk = '$res/get/nova.apk';
+    const resApk32 = '$res/get/nova-arm32.apk';
+    const res2Apk = '$res2/get/nova.apk';
+    const res2Apk32 = '$res2/get/nova-arm32.apk';
 
-    test('ordine delle basi: dominio dei download, pannello (saltato se uguale), GitHub', () {
+    Future<AppUpdater> fresh(Future<Object?> Function(Uri uri) fetch, {Map<String, Object> stored = const {}}) async {
+      SharedPreferences.setMockInitialValues(stored);
+      final prefs = await SharedPreferences.getInstance();
+      final u = AppUpdater(prefs, watching: () => false, fetchFeed: fetch);
+      u.currentCode = 18;
+      u.currentVersion = '1.0.18';
+      return u;
+    }
+
+    test('ordine delle basi: dominio dei download, poi le riserve; http, percorsi e doppioni si scartano', () async {
       expect(kDlBase, 'https://store-k.download');
-      expect(AppUpdater.feeds, [dlFeed, panel, kNovaFeedUrl]);
-      expect(updateFeeds('https://store-k.download/', 'nova', kNovaFeedUrl), [dlFeed, panel, kNovaFeedUrl]);
-      expect(updateFeeds('https://panel-kairos.com', 'nova', kNovaFeedUrl), [panel, kNovaFeedUrl]);
-      expect(updateFeeds('', 'nova', ''), [panel]);
+      final u = await fresh((_) async => null);
+      expect(u.feeds, [dlFeed]);
+      expect(updateFeeds('https://store-k.download/', 'nova'), [dlFeed]);
+      expect(updateFeeds(kDlBase, 'nova', ['', '$res/', kDlBase]), [dlFeed, resFeed]);
+      expect(updateFeeds('http://store-k.download', 'nova', ['$res/x', 'riserva-k.download', res2]), ['$res2/get/nova.json']);
+      expect(updateFeeds('', 'nova'), isEmpty);
+      expect(downloadBases(kDlBase, ['https://a-k.download', 'https://b-k.download', 'https://c-k.download', 'https://d-k.download']),
+          [kDlBase, 'https://a-k.download', 'https://b-k.download', 'https://c-k.download']);
+      final all = updateFeeds(kDlBase, 'nova', [kDlBase2, res]).join(' ');
+      expect(all, isNot(contains('panel-kairos.com')));
+      expect(all, isNot(contains('github.com')));
+      u.dispose();
     });
 
-    test('APK: link del feed, poi le basi successive, alla fine GitHub (64 e 32 bit)', () {
-      expect(apkUrls(dlApk, kDlBase, 'nova', ghApk), [dlApk, panelApk, ghApk]);
+    test('APK: link del feed, poi le basi successive (64 e 32 bit); un link fuori dalle basi passa a tutte', () {
+      const extra = [res, res2];
+      expect(apkUrls(dlApk, kDlBase, 'nova'), [dlApk]);
+      // l'APK a 32 bit del feed («urlArm32», sulla stessa base) lo prova prima la parte nativa: qui solo le basi dopo
       expect(apkAlternatives(dlApk), {
-        'alts': [panelApk, ghApk],
-        'alts32': [panelApk32, ghApk32],
-      });
-      // feed dal pannello (dominio dei download giù): il dominio dei download non si riprova
-      expect(apkAlternatives(panelApk), {
-        'alts': [ghApk],
-        'alts32': [ghApk32],
-      });
-      // feed di riserva di GitHub: solo GitHub
-      expect(apkAlternatives(ghApk), {
         'alts': <String>[],
-        'alts32': [ghApk32],
+        'alts32': <String>[],
       });
+      expect(apkAlternatives(dlApk, extra: extra), {
+        'alts': [resApk, res2Apk],
+        'alts32': [resApk32, res2Apk32],
+      });
+      // feed dalla riserva (dominio dei download giù): il dominio dei download non si riprova
+      expect(apkAlternatives(resApk, extra: extra), {
+        'alts': [res2Apk],
+        'alts32': [res2Apk32],
+      });
+      // link fuori dalle basi: il suo link, poi tutte le basi
+      const other = 'https://cdn.example.org/KairosNova-arm64.apk';
+      expect(apkAlternatives(other, extra: extra), {
+        'alts': [dlApk, resApk, res2Apk],
+        'alts32': [dlApk32, resApk32, res2Apk32],
+      });
+    });
+
+    test('«mirrors» del feed: solo https validi, senza doppioni, al massimo 3; senza lista → null', () {
+      expect(
+        feedMirrors(<String, Object?>{
+          'mirrors': [kDlBase, '$res/', 'http://x-k.download', res, 5, 'https://a-k.download', 'https://b-k.download'],
+        }),
+        [kDlBase, res, 'https://a-k.download'],
+      );
+      expect(feedMirrors(<String, Object?>{'mirrors': <Object?>[]}), isEmpty);
+      expect(feedMirrors(<String, Object?>{'version': '1.0.23'}), isNull);
+      expect(feedMirrors(<String, Object?>{'mirrors': res}), isNull);
+      expect(feedMirrors('pagina'), isNull);
     });
 
     test('con la prima base che risponde le altre non si chiedono', () async {
       final asked = <String>[];
-      final f = await firstFeed(AppUpdater.feeds, (uri) async {
+      final f = await firstFeed(updateFeeds(kDlBase, 'nova', [res]), (uri) async {
         asked.add('$uri');
         return <String, Object?>{'version': '1.0.23', 'versionCode': 23, 'url': dlApk, 'urlArm32': dlApk32};
       });
@@ -149,96 +187,115 @@ void main() {
       expect(asked, [dlFeed]);
     });
 
-    test('dominio dei download non attivo o parcheggiato, pannello con errore o JSON non valido → riserva GitHub', () async {
+    test('dominio dei download non attivo, parcheggiato, con errore o JSON non valido → la riserva', () async {
       final failures = <Future<Object?> Function()>[
         () async => throw const SocketException('Failed host lookup: store-k.download'),
         () async => throw const FormatException('<!DOCTYPE html>'), // pagina parcheggiata
         () async => null, // risposta diversa da 200 (es. 502)
         () async => <String, Object?>{'error': 'non disponibile'},
         () async => 'pagina di errore',
-        () async => <String, Object?>{'version': '1.0.23', 'versionCode': 23, 'url': 'http://panel-kairos.com/get/nova.apk'},
+        () async => <String, Object?>{'version': '1.0.23', 'versionCode': 23, 'url': 'http://store-k.download/get/nova.apk'},
       ];
       for (final fail in failures) {
         final asked = <String>[];
-        final f = await firstFeed(AppUpdater.feeds, (uri) async {
+        final f = await firstFeed(updateFeeds(kDlBase, 'nova', [res]), (uri) async {
           asked.add('$uri');
-          if ('$uri' == kNovaFeedUrl) return ghFeed;
+          if ('$uri' == resFeed) return <String, Object?>{'version': '1.0.23', 'versionCode': 23, 'url': resApk, 'urlArm32': resApk32};
           return fail();
         });
-        expect(f?['url'], ghApk);
-        expect(asked, [dlFeed, panel, kNovaFeedUrl]);
+        expect(f?['url'], resApk);
+        expect(asked, [dlFeed, resFeed]);
       }
     });
 
-    test('nessuno risponde (anche GitHub con il repository privato) → nessun feed, come una rete giù', () async {
-      expect(await firstFeed(AppUpdater.feeds, (_) async => null), isNull);
+    test('nessuno risponde → nessun feed, come una rete giù', () async {
+      expect(await firstFeed(updateFeeds(kDlBase, 'nova', [res]), (_) async => null), isNull);
     });
 
-    test('dal pannello: link dell\'APK, urlArm32 e riserve passano alla parte nativa; il link a 32 bit resta salvato', () async {
+    test('feed del dominio dei download: link dell\'APK, urlArm32 e basi successive alla parte nativa; il link a 32 bit resta salvato', () async {
       apkReady = false;
-      SharedPreferences.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
       final asked = <String>[];
-      final u = AppUpdater(prefs, watching: () => false, fetchFeed: (uri) async {
+      final u = await fresh((uri) async {
         asked.add('$uri');
-        if (uri.host == 'store-k.download') throw const SocketException('Failed host lookup: store-k.download');
-        return <String, Object?>{'version': '1.0.19', 'versionCode': 19, 'url': panelApk, 'urlArm32': panelApk32};
+        return <String, Object?>{'version': '1.0.19', 'versionCode': 19, 'url': dlApk, 'urlArm32': dlApk32};
       });
-      u.currentCode = 18;
-      u.currentVersion = '1.0.18';
       final found = await u.check();
       expect(found?.code, 19);
-      expect(found?.url, panelApk);
-      expect(found?.url32, panelApk32);
-      expect(asked, [dlFeed, panel]);
+      expect(found?.url, dlApk);
+      expect(found?.url32, dlApk32);
+      expect(asked, [dlFeed]);
       expect(calls.where((c) => c.method == 'updatePrefetch').single.arguments, {
-        'url': panelApk,
+        'url': dlApk,
         'code': 19,
-        'url32': panelApk32,
-        'alts': [ghApk],
-        'alts32': [ghApk32],
+        'url32': dlApk32,
+        'alts': <String>[],
+        'alts32': <String>[],
       });
       // riaperta l'app (anche senza rete) il link a 32 bit c'è ancora
+      final prefs = await SharedPreferences.getInstance();
       final again = AppUpdater(prefs, watching: () => false);
       await again.start();
       expect(again.pending?.code, 19);
-      expect(again.pending?.url32, panelApk32);
+      expect(again.pending?.url32, dlApk32);
       await again.install();
       expect(calls.where((c) => c.method == 'updateInstall').single.arguments, {
-        'url': panelApk,
+        'url': dlApk,
         'code': 19,
-        'url32': panelApk32,
-        'alts': [ghApk],
-        'alts32': [ghApk32],
+        'url32': dlApk32,
+        'alts': <String>[],
+        'alts32': <String>[],
       });
       await settle();
       u.dispose();
       again.dispose();
     });
 
-    test('dominio dei download e pannello giù: versione e link (anche a 32 bit) dalla riserva GitHub', () async {
+    test('i domini di riserva annunciati dal feed si salvano e valgono dal controllo dopo (anche riaprendo l\'app)', () async {
       apkReady = false;
-      SharedPreferences.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
       final asked = <String>[];
-      final u = AppUpdater(prefs, watching: () => false, fetchFeed: (uri) async {
+      var dlDown = false;
+      final u = await fresh((uri) async {
         asked.add('$uri');
-        if (uri.host != 'github.com') return null;
-        return ghFeed;
+        if (dlDown && uri.host == 'store-k.download') throw const SocketException('Failed host lookup: store-k.download');
+        return <String, Object?>{
+          'version': '1.0.19',
+          'versionCode': 19,
+          'url': 'https://${uri.host}/get/nova.apk',
+          'urlArm32': 'https://${uri.host}/get/nova-arm32.apk',
+          if (uri.host == 'store-k.download') 'mirrors': [kDlBase, res],
+        };
       });
-      u.currentCode = 18;
-      u.currentVersion = '1.0.18';
-      final found = await u.check();
-      expect(found?.url, ghApk);
-      expect(found?.url32, ghApk32);
-      expect(asked, [dlFeed, panel, kNovaFeedUrl]);
-      expect(calls.where((c) => c.method == 'updatePrefetch').single.arguments, {
-        'url': ghApk,
-        'code': 19,
-        'url32': ghApk32,
-        'alts': <String>[],
-        'alts32': [ghApk32],
-      });
+      await u.check();
+      expect(asked, [dlFeed]);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('dl_mirrors'), '$kDlBase\n$res');
+      expect(u.feeds, [dlFeed, resFeed]);
+      // il dominio dei download si spegne: la riserva imparata dal feed risponde
+      dlDown = true;
+      asked.clear();
+      calls.clear();
+      final found = await u.check(force: true);
+      expect(asked, [dlFeed, resFeed]);
+      expect(found?.url, resApk);
+      expect(found?.url32, resApk32);
+      expect(prefs.getString('dl_mirrors'), '$kDlBase\n$res'); // il feed della riserva non ha la lista: restano
+      // riaperta l'app le riserve ci sono ancora
+      final again = AppUpdater(prefs, watching: () => false);
+      expect(again.feeds, [dlFeed, resFeed]);
+      u.dispose();
+      again.dispose();
+    });
+
+    test('lista «mirrors» vuota nel feed: le riserve salvate si tolgono', () async {
+      final u = await fresh(
+        (_) async => <String, Object?>{'version': '1.0.18', 'versionCode': 18, 'url': dlApk, 'mirrors': <String>[]},
+        stored: {'dl_mirrors': res},
+      );
+      expect(u.feeds, [dlFeed, resFeed]);
+      await u.check();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('dl_mirrors'), isNull);
+      expect(u.feeds, [dlFeed]);
       u.dispose();
     });
 
@@ -295,7 +352,7 @@ void main() {
     });
 
     test('indirizzo che non risponde (connessione rifiutata): si passa subito al successivo', () async {
-      routes['/ok'] = '{"version":"1.0.23","versionCode":23,"url":"https://panel-kairos.com/get/nova.apk"}';
+      routes['/ok'] = '{"version":"1.0.23","versionCode":23,"url":"https://store-k.download/get/nova.apk"}';
       final closed = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final port = closed.port;
       await closed.close();

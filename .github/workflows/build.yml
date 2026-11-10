@@ -98,7 +98,9 @@ jobs:
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'kairosnova' }}
           KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: flutter build apk --release --split-per-abi --build-name=${{ steps.ver.outputs.version }} --build-number=${{ steps.ver.outputs.code }}
+          # secondo dominio dei download, di riserva (variabile del repository; vuota = nessuno)
+          DL_BASE2: ${{ vars.KAIROS_DL_BASE2 }}
+        run: flutter build apk --release --split-per-abi --build-name=${{ steps.ver.outputs.version }} --build-number=${{ steps.ver.outputs.code }} --dart-define=KAIROS_DL_BASE2="$DL_BASE2"
 
       - name: Rinomina APK
         run: |

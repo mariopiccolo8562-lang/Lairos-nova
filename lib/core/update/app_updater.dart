@@ -7,73 +7,80 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Indirizzo dei download (feed degli aggiornamenti e APK), il dominio dedicato ai download: l'unico da cambiare.
-/// L'app chiede `<kDlBase>/get/nova.json`, poi panel-kairos.com, poi la riserva [kNovaFeedUrl]; l'APK si scarica dai
+/// L'app chiede `<kDlBase>/get/nova.json` e, solo se non risponde bene, lo stesso file sulle riserve ([kDlBase2] e i
+/// domini annunciati dal feed in «mirrors»); niente pannello né GitHub (dal 10 novembre 2026). L'APK si scarica dai
 /// link del feed che ha risposto (`url`, e `urlArm32` sui dispositivi a 32 bit) e, se non riesce, dalle basi
-/// successive e alla fine dalla release «latest» di GitHub ([apkUrls]).
+/// successive ([apkUrls]).
 const String kDlBase = 'https://store-k.download';
 
-/// Pannello Kairos: seconda base dei download, con gli stessi percorsi `/get/<id>.json` e `/get/<id>.apk`.
-const String kPanelBase = 'https://panel-kairos.com';
+/// Secondo dominio dei download, di riserva, con gli stessi percorsi: vuoto finché non se ne compra uno. Si imposta
+/// senza toccare il codice con la variabile KAIROS_DL_BASE2 del repository (il workflow la passa con --dart-define).
+/// Anche senza, le app già installate imparano le riserve dal feed («mirrors», dalla lista DL_HOSTS del pannello).
+const String kDlBase2 = String.fromEnvironment('KAIROS_DL_BASE2');
 
-/// Riserva degli aggiornamenti, solo se dominio dei download e pannello non rispondono: feed della release «latest»
-/// su GitHub. Quando il repository diventerà privato fallirà senza danni.
-const String kNovaFeedUrl = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/kairos-nova.json';
+/// Base dei download valida: solo https e solo il dominio (porta facoltativa), senza percorso.
+final RegExp _kBase = RegExp(r'^https://[a-z0-9.-]+\.[a-z]{2,}(:\d{1,5})?$', caseSensitive: false);
 
-/// Ultima riserva degli APK, dopo le basi dei download: quelli della release «latest» su GitHub (64 e 32 bit).
-const String kNovaApkFallback = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/KairosNova-arm64.apk';
-const String kNovaApk32Fallback = 'https://github.com/mariopiccolo8562-lang/Lairos-nova/releases/download/latest/KairosNova-arm32.apk';
+String _trimBase(String base) {
+  var b = base.trim();
+  while (b.endsWith('/')) {
+    b = b.substring(0, b.length - 1);
+  }
+  return b;
+}
 
-/// Basi https dei download, in ordine e senza doppioni: [dlBase] ([kDlBase]), poi il pannello [kPanelBase].
-List<String> downloadBases(String dlBase) {
+/// Basi https valide da [list], in ordine e senza doppioni, al massimo [max].
+List<String> _validBases(Iterable<String> list, int max) {
   final out = <String>[];
-  for (final base in [dlBase, kPanelBase]) {
-    var b = base.trim();
-    while (b.endsWith('/')) {
-      b = b.substring(0, b.length - 1);
-    }
-    if (b.startsWith('https://') && !out.contains(b)) out.add(b);
+  for (final base in list) {
+    final b = _trimBase(base);
+    if (_kBase.hasMatch(b) && !out.contains(b)) out.add(b);
+    if (out.length >= max) break;
   }
   return out;
 }
 
-/// Feed degli aggiornamenti da provare, in ordine e senza doppioni (solo https): `/get/<id>.json` su ogni base
-/// ([downloadBases]), poi [fallback], la riserva di oggi su GitHub (con il repository privato fallirà senza danni).
-List<String> updateFeeds(String dlBase, String id, String fallback) {
-  final out = [for (final b in downloadBases(dlBase)) '$b/get/$id.json'];
-  final f = fallback.trim();
-  if (f.startsWith('https://') && !out.contains(f)) out.add(f);
-  return out;
-}
+/// Basi https dei download, in ordine e senza doppioni: [dlBase] ([kDlBase]), poi le riserve [extra] ([kDlBase2] e i
+/// domini annunciati dal feed); al massimo 4.
+List<String> downloadBases(String dlBase, [List<String> extra = const []]) => _validBases([dlBase, ...extra], 4);
+
+/// Feed degli aggiornamenti da provare, in ordine: `/get/<id>.json` su ogni base ([downloadBases]).
+List<String> updateFeeds(String dlBase, String id, [List<String> extra = const []]) =>
+    [for (final b in downloadBases(dlBase, extra)) '$b/get/$id.json'];
 
 /// APK da provare, in ordine: [url], il link del feed che ha risposto; poi lo stesso APK (`/get/<id>.apk`) sulle basi
-/// successive a quella del link; alla fine [ghApk], quello della release «latest» su GitHub. Un link fuori dalle basi
-/// (quello del feed di riserva di GitHub) passa direttamente a [ghApk].
-List<String> apkUrls(String url, String dlBase, String id, String ghApk) {
+/// successive a quella del link. Un link fuori dalle basi passa a tutte le basi.
+List<String> apkUrls(String url, String dlBase, String id, [List<String> extra = const []]) {
   final out = <String>[];
   if (url.startsWith('https://')) out.add(url);
-  final bases = downloadBases(dlBase);
+  final bases = downloadBases(dlBase, extra);
   final at = bases.indexWhere((b) => url.startsWith('$b/'));
-  if (at >= 0) {
-    for (final b in bases.skip(at + 1)) {
-      final u = '$b/get/$id.apk';
-      if (!out.contains(u)) out.add(u);
-    }
+  for (final b in at >= 0 ? bases.skip(at + 1) : bases) {
+    final u = '$b/get/$id.apk';
+    if (!out.contains(u)) out.add(u);
   }
-  final g = ghApk.trim();
-  if (g.startsWith('https://') && !out.contains(g)) out.add(g);
   return out;
+}
+
+/// Domini di riserva annunciati dal feed («mirrors»): solo https validi, senza doppioni, al massimo 3.
+/// null = il feed non ha la lista (quelli già salvati restano); lista vuota = nessuna riserva.
+List<String>? feedMirrors(Object? raw) {
+  if (raw is! Map) return null;
+  final list = raw['mirrors'];
+  if (list is! List) return null;
+  return _validBases(list.whereType<String>(), 3);
 }
 
 /// Dove riprovare l'APK se il link del feed [url] non riesce, per la parte nativa: `alts` (64 bit: `/get/nova.apk`
-/// sulle basi successive, poi GitHub) e `alts32` (32 bit: `/get/nova-arm32.apk`, poi GitHub). L'APK a 32 bit del feed
-/// sta sulla stessa base di [url].
-Map<String, List<String>> apkAlternatives(String url, {String dlBase = kDlBase}) => {
-      'alts': [for (final u in apkUrls(url, dlBase, 'nova', kNovaApkFallback)) if (u != url) u],
-      'alts32': [for (final u in apkUrls(url, dlBase, 'nova-arm32', kNovaApk32Fallback)) if (u != url) u],
+/// sulle basi successive) e `alts32` (32 bit: `/get/nova-arm32.apk` sulle basi successive). L'APK a 32 bit del feed
+/// sta sulla stessa base di [url]. [extra]: le riserve ([kDlBase2] e i domini annunciati dal feed).
+Map<String, List<String>> apkAlternatives(String url, {String dlBase = kDlBase, List<String> extra = const []}) => {
+      'alts': [for (final u in apkUrls(url, dlBase, 'nova', extra)) if (u != url) u],
+      'alts32': [for (final u in apkUrls(url, dlBase, 'nova-arm32', extra)) if (u != url) u],
     };
 
-/// Legge un feed con un client suo: connessione al massimo 5 s (il dominio dei download non ancora attivo fa passare in
-/// fretta al pannello), risposta al massimo 10 s e 256 KB. Il JSON se la risposta è 200, altrimenti null; HTML o JSON
+/// Legge un feed con un client suo: connessione al massimo 5 s (un dominio non attivo fa passare in fretta alla base
+/// successiva), risposta al massimo 10 s e 256 KB. Il JSON se la risposta è 200, altrimenti null; HTML o JSON
 /// rotto: FormatException (si prova il feed successivo).
 Future<Object?> fetchFeedJson(Uri uri, {String userAgent = 'KairosNova'}) async {
   final client = HttpClient()
@@ -100,8 +107,8 @@ int feedCode(Map<dynamic, dynamic> m) =>
     (m['versionCode'] is num) ? (m['versionCode'] as num).toInt() : int.tryParse('${m['versionCode']}') ?? 0;
 
 /// Primo feed valido (versionCode riconosciuto e APK in https) nell'ordine di [feeds]: si passa al successivo solo se
-/// quello prima non risponde, risponde con un errore o con un JSON non valido, così con il pannello che funziona la
-/// richiesta resta una sola. null = nessuno ha risposto bene (come una rete giù: si riprova più tardi).
+/// quello prima non risponde, risponde con un errore o con un JSON non valido, così con il dominio dei download che
+/// funziona la richiesta resta una sola. null = nessuno ha risposto bene (come una rete giù: si riprova più tardi).
 Future<Map<String, dynamic>?> firstFeed(List<String> feeds, Future<Object?> Function(Uri uri) fetch) async {
   for (final f in feeds) {
     try {
@@ -176,16 +183,17 @@ class NovaNative {
     return r;
   }
   static Future<Map<String, dynamic>> updateStatus(int code) => _call('updateStatus', {'code': code});
-  static Future<void> updatePrefetch(String url, int code, {String url32 = ''}) =>
-      _call('updatePrefetch', {'url': url, 'code': code, 'url32': url32, ...apkAlternatives(url)});
-  static Future<void> updateInstall(String url, int code, {String url32 = ''}) =>
-      _call('updateInstall', {'url': url, 'code': code, 'url32': url32, ...apkAlternatives(url)});
+  static Future<void> updatePrefetch(String url, int code, {String url32 = '', List<String> extra = const []}) =>
+      _call('updatePrefetch', {'url': url, 'code': code, 'url32': url32, ...apkAlternatives(url, extra: extra)});
+  static Future<void> updateInstall(String url, int code, {String url32 = '', List<String> extra = const []}) =>
+      _call('updateInstall', {'url': url, 'code': code, 'url32': url32, ...apkAlternatives(url, extra: extra)});
 }
 
 /// Aggiornamento dell'app.
-/// - Controllo all'avvio e ogni ora: feed del dominio dei download (store-k.download), poi del pannello
-///   (`/get/nova.json`, vedi [updateFeeds]) e, solo se nessuno dei due risponde bene, della release «latest» su GitHub.
-///   Se l'APK non si scarica dal link del feed, la parte nativa prova le basi successive e GitHub ([apkAlternatives]).
+/// - Controllo all'avvio e ogni ora: `/get/nova.json` del dominio dei download (store-k.download) e, solo se non
+///   risponde bene, quello delle riserve ([feeds]); niente pannello né GitHub. Se l'APK non si scarica dal link del
+///   feed, la parte nativa prova le basi successive ([apkAlternatives]). I domini di riserva annunciati dal feed
+///   («mirrors») restano salvati sul dispositivo per i controlli successivi.
 /// - Aggiornamento in background (scelta del cliente o imposta dal fornitore, acceso di serie): l'APK si scarica
 ///   e si verifica in silenzio (solo su Wi-Fi o cavo, mai durante la visione); quando è pronto si propone
 ///   «Installa ora» e al cliente resta solo la conferma di Android.
@@ -200,9 +208,14 @@ class AppUpdater extends ChangeNotifier {
     _policy = _decodePolicy(_prefs.getString('upd_policy'));
     _rcPolicy = _savedRemotePolicy(_prefs.getString('kx_rc'));
     _first = _prefs.getString('upd_first') ?? '';
+    _mirrors = [
+      for (final m in (_prefs.getString(_kMirrors) ?? '').split('\n'))
+        if (m.trim().isNotEmpty) m.trim(),
+    ];
   }
 
   static const String _kPending = 'upd_pending';
+  static const String _kMirrors = 'dl_mirrors';
 
   final SharedPreferences _prefs;
 
@@ -212,8 +225,14 @@ class AppUpdater extends ChangeNotifier {
   /// Lettura di un feed (le prove la sostituiscono); null = rete ([fetchFeedJson]).
   final Future<Object?> Function(Uri uri)? fetchFeed;
 
-  /// Feed da provare in ordine: dominio dei download, pannello, GitHub di riserva.
-  static final List<String> feeds = updateFeeds(kDlBase, 'nova', kNovaFeedUrl);
+  /// Domini di riserva annunciati dal feed («mirrors»), salvati sul dispositivo.
+  List<String> _mirrors = const [];
+
+  /// Basi di riserva dei download: quella compilata ([kDlBase2]) e i domini annunciati dal feed.
+  List<String> get _extra => [kDlBase2, ..._mirrors];
+
+  /// Feed da provare in ordine: dominio dei download, poi le riserve (anche quelle annunciate dall'ultimo feed).
+  List<String> get feeds => updateFeeds(kDlBase, 'nova', _extra);
 
   StreamSubscription<Map<String, dynamic>>? _sub;
   Timer? _timer;
@@ -347,7 +366,7 @@ class AppUpdater extends ChangeNotifier {
       final m = apk is Map ? apk : const {};
       final version = (m['version'] ?? '').toString().replaceFirst(RegExp(r'^v'), '');
       final code = feedCode(m);
-      final url = (m['url'] ?? '').toString(); // l'APK si scarica da qui (dal pannello, se il feed è il suo)
+      final url = (m['url'] ?? '').toString(); // l'APK si scarica da qui (dalla base del feed che ha risposto)
       final arm32 = (m['urlArm32'] ?? '').toString();
       final url32 = arm32.startsWith('https://') ? arm32 : '';
       if (code <= currentCode || !url.startsWith('https://')) {
@@ -372,7 +391,7 @@ class AppUpdater extends ChangeNotifier {
       _savePending();
       final metered = st['metered'] == true;
       if (!ready && !manual && (bgUpdate || force) && (force || !metered) && !watching() && _failed < 3) {
-        await NovaNative.updatePrefetch(url, code, url32: url32); // l'esito arriva con l'evento ready | failed
+        await NovaNative.updatePrefetch(url, code, url32: url32, extra: _extra); // l'esito arriva con l'evento ready | failed
       } else {
         _maybeOffer(manual: manual);
       }
@@ -391,15 +410,25 @@ class AppUpdater extends ChangeNotifier {
     message = null;
     progress = ready ? 100 : 0;
     notifyListeners();
-    await NovaNative.updateInstall(u.url, u.code, url32: u.url32);
+    await NovaNative.updateInstall(u.url, u.code, url32: u.url32, extra: _extra);
   }
 
-  /// Feed: dominio dei download, poi pannello ([feeds]); GitHub solo se nessuno dei due risponde con un feed valido.
+  /// Feed: dominio dei download, poi le riserve ([feeds]) solo se non risponde con un feed valido.
   /// La politica pubblica (in background sì/no, obbligatorio dopo N giorni) vale se il feed la porta («policy»),
   /// altrimenti resta l'ultima salvata; quella del fornitore per questo dispositivo arriva col battito.
+  /// I domini di riserva del feed («mirrors») si salvano per i controlli successivi; senza la lista restano quelli di prima.
   Future<Map<String, dynamic>?> _fetchFeed() async {
     final feed = await firstFeed(feeds, fetchFeed ?? _getJson);
     if (feed == null) return null;
+    final mirrors = feedMirrors(feed);
+    if (mirrors != null && mirrors.join('\n') != _mirrors.join('\n')) {
+      _mirrors = mirrors;
+      if (mirrors.isEmpty) {
+        await _prefs.remove(_kMirrors);
+      } else {
+        await _prefs.setString(_kMirrors, mirrors.join('\n'));
+      }
+    }
     final pol = feed['policy'];
     return {'apk': feed, 'policy': pol is Map ? pol : _policy};
   }
