@@ -24,6 +24,12 @@ class MainActivity : FlutterActivity() {
     private fun links(call: MethodCall, key: String): List<String> =
         (call.argument<List<Any?>>(key) ?: emptyList()).mapNotNull { it as? String }.filter { it.startsWith("https://") }
 
+    /** risposta di Android alla richiesta del DNS cifrato (stessa finestra della VPN) */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == DnsShield.REQ) DnsShield.onConsent(applicationContext, resultCode == RESULT_OK)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         Quiet.watch(application) // Android 12+: aggiornamento senza conferma quando il cliente esce dall'app
         super.configureFlutterEngine(flutterEngine)
@@ -80,6 +86,10 @@ class MainActivity : FlutterActivity() {
                     if (url.startsWith("https://") && code > 0) Updater.install(this, url, code, url32, links(call, "alts"), links(call, "alts32"))
                     result.success(true)
                 }
+                // DNS cifrato (voce «sdns» del pannello): lo decide la parte Flutter, qui si accende e si spegne (DnsShield.kt)
+                "dnsStart" -> { DnsShield.start(this); result.success(DnsShield.state) }
+                "dnsStop" -> { DnsShield.stop(applicationContext); result.success(DnsShield.state) }
+                "dnsState" -> result.success(DnsShield.state)
                 else -> result.notImplemented()
             }
         }

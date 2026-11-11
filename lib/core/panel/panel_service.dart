@@ -250,6 +250,7 @@ class PanelService extends ChangeNotifier {
       lastError = null;
       if (s.active) _applyPerms(s.perms);
       if (s.raw.containsKey('rc')) _applyRc(s.raw['rc'], (s.raw['rcv'] ?? '').toString());
+      unawaited(_syncDns()); // a ogni apertura, anche se la configurazione è la stessa di prima
       if (s.active) {
         if (_watching) {
           _pendingPlaylists = s.playlists; // niente download di liste durante la visione: a lettore chiuso
@@ -435,7 +436,12 @@ class PanelService extends ChangeNotifier {
         if (engine != null) ...engine.panelStats() else 'line': StreamEngine.savedLine(_prefs),
         'dev': _dev,
       };
-      final call = c.heartbeat(state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
+      if (_dnsWanted) {
+        try {
+          _dns = (await const MethodChannel('kairos/nova').invokeMethod<Object?>('dnsState'))?.toString() ?? '';
+        } catch (_) {}
+      }
+      final call = c.heartbeat(sdns: _dnsWanted ? _dns : '', state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
       _beatCall = call;
       final r = await call.whenComplete(() {
         if (identical(_beatCall, call)) _beatCall = null;
@@ -491,6 +497,19 @@ class PanelService extends ChangeNotifier {
 
   static String _offKeys(Map<String, bool> m) => ([for (final e in m.entries) if (!e.value) e.key]..sort()).join(',');
 
+  /// DNS cifrato deciso dal pannello (voce «sdns»: on | off, vuota = spento): acceso solo con il dispositivo attivo.
+  /// Non è una scelta del cliente. [_dns] = stato dell'ultima volta, per il battito.
+  String _dns = '';
+  bool get _dnsWanted => _rc['sdns'] == 'on';
+
+  Future<void> _syncDns() async {
+    try {
+      _dns = (await const MethodChannel('kairos/nova').invokeMethod<Object?>(_dnsWanted && active ? 'dnsStart' : 'dnsStop'))?.toString() ?? '';
+    } catch (_) {
+      _dns = '';
+    }
+  }
+
   void _applyRc(Object? raw, String rcv) {
     Map<String, String> next = const {};
     try {
@@ -500,6 +519,7 @@ class PanelService extends ChangeNotifier {
     if (jsonEncode(next) == jsonEncode(_rc) && rcv == _rcv) return;
     _rc = next;
     _rcv = rcv;
+    unawaited(_syncDns()); // voce «sdns» accesa o spenta dal pannello
     _prefs.setString('kx_rc', jsonEncode(next));
     _prefs.setString('kx_rcv', rcv);
     _ref.read(appUpdaterProvider).applyRemotePolicy({for (final k in ['bgupd', 'force']) if (next.containsKey(k)) k: next[k]!});

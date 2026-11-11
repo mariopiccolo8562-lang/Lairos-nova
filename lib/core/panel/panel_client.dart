@@ -208,11 +208,12 @@ class PanelClient {
   /// [vis]: true = app in primo piano (menu o visione); false = appena andata in sfondo (il pannello la mostra subito
   /// non in linea e quel battito non conta per il limite dei 15 s).
   /// Risposta: HTTP 200 con i dati del battito; 429 con «wait» (secondi da aspettare); status 0 = server non raggiungibile.
-  Future<PanelResponse> heartbeat({required String state, String title = '', String screen = '', int kickAck = 0, Map<String, Object?> cfg = const {}, Map<String, Object?> stats = const {}, String rcv = '', bool vis = true}) async {
+  Future<PanelResponse> heartbeat({required String state, String sdns = '', String title = '', String screen = '', int kickAck = 0, Map<String, Object?> cfg = const {}, Map<String, Object?> stats = const {}, String rcv = '', bool vis = true}) async {
     try {
       return await _post('/api/player/heartbeat', {
         ..._auth(),
         'vis': vis,
+        if (sdns.isNotEmpty) 'sdns': sdns, // DNS cifrato: stato, solo se il pannello lo ha acceso
         'state': state,
         'title': title,
         'ch': '',
