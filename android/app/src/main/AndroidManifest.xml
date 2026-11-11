@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <!-- aggiornamento dell'app: apre l'installer di Android con l'APK scaricato in background -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Android 12+: aggiornamento di se stessa senza conferma (vedi Quiet.kt) -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
 
     <!-- Android TV / Fire TV: nessun touchscreen richiesto, leanback opzionale -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
@@ -65,6 +67,8 @@
         </provider>
 
         <meta-data android:name="flutterEmbedding" android:value="2"/>
+        <!-- esito dell'aggiornamento senza conferma -->
+        <receiver android:name=".QuietDone" android:exported="false"/>
     </application>
 
     <queries>

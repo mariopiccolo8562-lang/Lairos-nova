@@ -262,6 +262,7 @@ class AppUpdater extends ChangeNotifier {
   Future<String> fromPanel() async {
     final u = await check(force: true);
     if (u == null) return 'già aggiornata ($currentVersion)';
+    if (_quietNow(u)) return 'versione ${u.version}${ready ? ' pronta' : ' in scaricamento'}: si installa da sola quando il cliente esce dall\'app';
     if (watching()) return 'versione ${u.version}: proposta a fine visione';
     return ready ? 'versione ${u.version} pronta: proposta al cliente' : 'versione ${u.version} in scaricamento';
   }
@@ -275,6 +276,28 @@ class AppUpdater extends ChangeNotifier {
 
   /// L'APK di [pending] è già scaricato e verificato.
   bool ready = false;
+
+  /// Android 12+ (11 novembre 2026): la versione si installa da sola quando il cliente esce dall'app (Quiet.kt nativo),
+  /// quindi niente proposta finché non è obbligatoria; se dopo 3 giorni non si è installata (app mai chiusa), se Android
+  /// non lo permette o lo scaricamento in background non riesce, torna la proposta di sempre.
+  bool quiet = false;
+
+  static const _blockedHint =
+      'Se Android blocca l\'installazione: spegni «Blocco automatico» in Impostazioni › Sicurezza e privacy, poi riprova.';
+
+  bool _quietNow(UpdateInfo u) {
+    if (!quiet || !(ready || (bgUpdate && _failed < 3))) return false;
+    final parts = _first.split(':');
+    if (parts.length != 2 || int.tryParse(parts[0]) != u.code) return true;
+    final first = int.tryParse(parts[1]) ?? 0;
+    return DateTime.now().millisecondsSinceEpoch - first < 3 * 86400000;
+  }
+
+  /// Stato della parte nativa: senza conferma sì/no e l'eventuale blocco del Samsung (riga nella finestra).
+  void _quietFrom(Map<String, dynamic> st) {
+    quiet = st['quiet'] == true;
+    if (st['quietBlocked'] == true) message ??= _blockedHint;
+  }
 
   /// Avanzamento del download richiesto dal cliente (0-100), -1 se fermo.
   int progress = -1;
@@ -388,6 +411,7 @@ class AppUpdater extends ChangeNotifier {
       await _firstSeen(u);
       final st = await NovaNative.updateStatus(code);
       ready = st['ready'] == true;
+      _quietFrom(st);
       _savePending();
       final metered = st['metered'] == true;
       if (!ready && !manual && (bgUpdate || force) && (force || !metered) && !watching() && _failed < 3) {
@@ -450,6 +474,7 @@ class AppUpdater extends ChangeNotifier {
       _offerDeferred = true; // niente finestre sopra il lettore: si mostra al ritorno nel menu
       return;
     }
+    if (!manual && !mustUpdate && _quietNow(u)) return; // Android 12+: si installa da sola quando il cliente esce dall'app
     if (!manual && !mustUpdate && _offeredCode == u.code) return;
     _offeredCode = u.code;
     offer.value = u;
@@ -475,7 +500,7 @@ class AppUpdater extends ChangeNotifier {
     if (u == null) {
       _prefs.remove(_kPending);
     } else {
-      _prefs.setString(_kPending, jsonEncode({'code': u.code, 'version': u.version, 'url': u.url, 'url32': u.url32, 'ready': ready}));
+      _prefs.setString(_kPending, jsonEncode({'code': u.code, 'version': u.version, 'url': u.url, 'url32': u.url32, 'ready': ready, 'quiet': quiet}));
     }
   }
 
@@ -497,6 +522,7 @@ class AppUpdater extends ChangeNotifier {
             url32: url32.startsWith('https://') ? url32 : '',
           );
           ready = j['ready'] == true;
+          quiet = j['quiet'] == true; // l'ultima risposta della parte nativa: la riconferma arriva subito dopo
           return;
         }
       }
@@ -510,6 +536,9 @@ class AppUpdater extends ChangeNotifier {
     if (u == null) return;
     final st = await NovaNative.updateStatus(u.code);
     if (st.isEmpty || pending?.code != u.code) return;
+    final wasQuiet = quiet;
+    _quietFrom(st);
+    if (quiet != wasQuiet) _savePending();
     final now = st['ready'] == true;
     if (now != ready) {
       ready = now;

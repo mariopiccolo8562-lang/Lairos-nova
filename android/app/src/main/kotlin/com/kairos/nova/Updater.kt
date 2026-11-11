@@ -69,6 +69,9 @@ object Updater {
         "metered" to metered(ctx),
         "busy" to busy.get(),
         "canInstall" to (Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()),
+        // Android 12+: si installa da sola quando il cliente esce dall'app (Quiet.kt), Flutter non la propone
+        "quiet" to Quiet.ok(ctx, code),
+        "quietBlocked" to Quiet.blocked(ctx, code),
     )
 
     /**
