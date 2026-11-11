@@ -11,6 +11,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('kairos/nova');
   var apkReady = true;
+  var quietOn = false; // Android 12+: si installa da sola all'uscita (Quiet.kt)
+  var blockedOn = false; // installazione senza conferma bloccata su un Samsung
   final calls = <MethodCall>[];
 
   setUp(() {
@@ -21,14 +23,14 @@ void main() {
         case 'deviceInfo':
           return <String, Object>{'version': '1.0.18', 'versionCode': 18, 'sdk': 28, 'model': 'AFTSS'};
         case 'updateStatus':
-          return <String, Object>{'ready': apkReady, 'metered': false, 'busy': false, 'canInstall': true};
+          return <String, Object>{'ready': apkReady, 'metered': false, 'busy': false, 'canInstall': true, 'quiet': quietOn, 'quietBlocked': blockedOn};
       }
       return null;
     });
   });
 
-  Map<String, Object> saved({bool ready = true, int daysAgo = 8, String force = '7d'}) => {
-        'upd_pending': jsonEncode({'code': 19, 'version': '1.0.19', 'url': 'https://example.com/n.apk', 'ready': ready}),
+  Map<String, Object> saved({bool ready = true, int daysAgo = 8, String force = '7d', bool quiet = false}) => {
+        'upd_pending': jsonEncode({'code': 19, 'version': '1.0.19', 'url': 'https://example.com/n.apk', 'ready': ready, if (quiet) 'quiet': true}),
         'upd_first': '19:${DateTime.now().subtract(Duration(days: daysAgo)).millisecondsSinceEpoch}',
         'kx_rc': jsonEncode({'force': force}),
       };
@@ -74,6 +76,41 @@ void main() {
     await settle();
     expect(offers.length, 1);
     u.dispose();
+  });
+
+  test('Android 12+, si installa da sola all\'uscita: nessuna proposta; obbligatoria sì; dopo 3 giorni torna', () async {
+    apkReady = true;
+    quietOn = true;
+    SharedPreferences.setMockInitialValues(saved(daysAgo: 0, force: '', quiet: true));
+    var offers = <UpdateInfo>[];
+    var u = await started(() => false, offers);
+    await settle();
+    expect(u.quiet, isTrue);
+    expect(offers, isEmpty);
+    u.dispose();
+    SharedPreferences.setMockInitialValues(saved(quiet: true)); // obbligatoria e scaduta
+    offers = <UpdateInfo>[];
+    u = await started(() => false, offers);
+    await settle();
+    expect(u.mustUpdate, isTrue);
+    expect(offers.map((e) => e.code), [19]);
+    u.dispose();
+    SharedPreferences.setMockInitialValues(saved(daysAgo: 4, force: '', quiet: true)); // 4 giorni senza installarsi
+    offers = <UpdateInfo>[];
+    u = await started(() => false, offers);
+    await settle();
+    expect(offers.map((e) => e.code), [19]);
+    u.dispose();
+    quietOn = false;
+    blockedOn = true; // bloccata su un Samsung: proposta con la riga del «Blocco automatico»
+    SharedPreferences.setMockInitialValues(saved(daysAgo: 0, force: ''));
+    offers = <UpdateInfo>[];
+    u = await started(() => false, offers);
+    await settle();
+    expect(offers.map((e) => e.code), [19]);
+    expect(u.message, contains('Blocco automatico'));
+    u.dispose();
+    blockedOn = false;
   });
 
   test('versione salvata già installata: si dimentica', () async {
