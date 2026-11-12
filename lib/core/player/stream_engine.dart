@@ -180,10 +180,22 @@ class StreamEngine {
   double _brEma = 0; // bitrate medio del link in visione, memorizzato per scegliere la versione più leggera
   bool _disposed = false;
   int _generation = 0;
+  Future<String?> Function(Channel)? _resolveProviderUrl;
+  Future<String?> Function(Channel)? _nextProviderUrl;
+  bool _portalFailoverBusy = false;
+  bool _portalFailoverExhausted = false;
 
   final _subs = <StreamSubscription>[];
 
   // ------------------------------------------------------------- Pubblico
+
+  void setPortalHandlers({
+    required Future<String?> Function(Channel) resolve,
+    required Future<String?> Function(Channel) next,
+  }) {
+    _resolveProviderUrl = resolve;
+    _nextProviderUrl = next;
+  }
 
   Future<void> play(Channel c, {Duration? startAt}) async {
     _generation++;
@@ -203,6 +215,8 @@ class StreamEngine {
     _hlsStepped = false;
     _hlsOverride = null;
     _failedOpenAt = null;
+    _portalFailoverBusy = false;
+    _portalFailoverExhausted = false;
     _netErrs = 0;
     _ttffMs = 0;
     _resumePos = startAt ?? Duration.zero;
@@ -218,6 +232,8 @@ class StreamEngine {
     _saveLine();
     _current = null;
     _alts = null;
+    _portalFailoverBusy = false;
+    _portalFailoverExhausted = false;
     try {
       await _player.stop();
     } catch (_) {}
@@ -433,6 +449,16 @@ class StreamEngine {
 
   Future<void> _open(Channel c, int gen, {Duration? startAt}) async {
     if (_disposed || gen != _generation) return;
+    String? providerUrl;
+    try {
+      providerUrl = await _resolveProviderUrl?.call(c);
+    } catch (_) {}
+    if (_disposed || gen != _generation) return;
+    if (providerUrl != null && providerUrl.isNotEmpty && providerUrl != c.url) {
+      c = c.copyWith(url: providerUrl);
+      _current = c;
+      _emit(_status.value.copyWith(channel: c));
+    }
     _openedAt = DateTime.now();
     _lastPos = Duration.zero;
     _lastProgress = DateTime.now();
@@ -813,6 +839,14 @@ class StreamEngine {
     if (_retryTimer?.isActive == true || _opening) return;
     final openedAt = _openedAt;
     if (openedAt != null && _failedOpenAt == openedAt) return;
+    if (!_portalFailoverBusy &&
+        !_portalFailoverExhausted &&
+        _nextProviderUrl != null &&
+        _isNetworkFailure(reason)) {
+      _portalFailoverBusy = true;
+      unawaited(_tryPortalFailover(c, reason, _generation));
+      return;
+    }
     _failedOpenAt = openedAt;
     final gen = _generation;
     final wasStarted = _started;
@@ -869,6 +903,63 @@ class StreamEngine {
       if (gen != _generation || _disposed) return;
       _open(t, gen, startAt: _resumeStart());
     });
+  }
+
+  bool _isNetworkFailure(String reason) {
+    final text = reason.toLowerCase();
+    return const [
+      'rete',
+      'network',
+      'connection',
+      'connessione',
+      'timeout',
+      'server',
+      'http',
+      'unreachable',
+      'refused',
+      'bloccato',
+      'socket',
+      'host',
+      'fallita',
+      'failed to open',
+    ].any(text.contains);
+  }
+
+  Future<void> _tryPortalFailover(Channel channel, String reason, int gen) async {
+    try {
+      final next = await _nextProviderUrl?.call(channel);
+      if (_disposed || gen != _generation) return;
+      if (next == null || next.isEmpty) {
+        _portalFailoverExhausted = true;
+        _portalFailoverBusy = false;
+        _onFailure(reason);
+        return;
+      }
+      try {
+        _db.recordStreamResult(_playingUrl ?? channel.url, ok: false);
+      } catch (_) {}
+      _generation++;
+      final nextGen = _generation;
+      _cancelTimers();
+      _current = channel.copyWith(url: next);
+      _alts = null;
+      _altIndex = -1;
+      _attempt = 0;
+      _failures = 0;
+      _failedOpenAt = null;
+      _portalFailoverExhausted = false;
+      _portalFailoverBusy = false;
+      _emit(_status.value.copyWith(
+        state: EngineState.reconnecting,
+        channel: _current,
+        message: '$reason · DNS alternativo',
+      ));
+      await _open(_current!, nextGen, startAt: _resumeStart());
+    } catch (_) {
+      _portalFailoverExhausted = true;
+      _portalFailoverBusy = false;
+      if (!_disposed && gen == _generation) _onFailure(reason);
+    }
   }
 
   /// Stato terminale: timer fermi, la UI offre «Riprova» e «Altra sorgente».
