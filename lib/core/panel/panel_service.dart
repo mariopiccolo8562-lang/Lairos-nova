@@ -395,11 +395,15 @@ class PanelService extends ChangeNotifier {
       seen.add(p.id);
       final existingId = int.tryParse(map[p.id] ?? '');
       final existing = existingId == null ? null : db.playlist(existingId);
+      final legacySource = existing != null &&
+              (p.isXtream || PortalRotation.isXtreamGetUrl(p.m3uUrl))
+          ? existing.source
+          : p.m3uUrl;
       final signatureMatches = existing != null &&
           PortalRotation.signaturesMatch(
             sigs[p.id],
             p.signature,
-            p.legacySignatureForSource(existing.source),
+            p.legacySignatureForSource(legacySource),
           );
       final host = _portalHost(p);
       if (signatureMatches) {

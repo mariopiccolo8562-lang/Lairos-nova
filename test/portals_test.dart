@@ -96,6 +96,36 @@ void main() {
       PortalRotation.next(mode: 'rot', candidates: candidates, code: 'ABC123', current: rotated.first, nowMs: now),
       rotated[1],
     );
+    final autoBad = {
+      PortalRotation.hostKey(candidates[0]): 2000,
+      PortalRotation.hostKey(candidates[1]): 2000,
+    };
+    expect(
+      PortalRotation.next(
+        mode: 'auto',
+        candidates: candidates,
+        code: '',
+        current: 'http://missing.test',
+        badUntil: autoBad,
+        nowMs: now,
+      ),
+      candidates[2],
+    );
+    final rotatedBad = {
+      PortalRotation.hostKey(rotated[0]): 2000,
+      PortalRotation.hostKey(rotated[1]): 2000,
+    };
+    expect(
+      PortalRotation.next(
+        mode: 'rot',
+        candidates: candidates,
+        code: 'ABC123',
+        current: 'http://missing.test',
+        badUntil: rotatedBad,
+        nowMs: now,
+      ),
+      rotated[2],
+    );
     expect(PortalRotation.next(mode: 'main', candidates: candidates, code: '', current: candidates.first), isNull);
   });
 
@@ -145,6 +175,62 @@ void main() {
     );
     expect(
       PortalRotation.signaturesMatch('other', oldPlaylist.signature, oldPlaylist.legacySignatureForSource(oldPlaylist.server)),
+      isFalse,
+    );
+
+    final getMain = PanelPlaylist.fromJson({
+      'id': 'get',
+      'name': 'Get playlist',
+      'type': 'm3u',
+      'url': 'http://main.test/get.php?username=u&password=p&type=m3u_plus',
+    });
+    final getAlt = PanelPlaylist.fromJson({
+      'id': 'get',
+      'name': 'Get playlist',
+      'type': 'm3u',
+      'url': 'https://alt.test/get.php?username=u&password=p&type=m3u_plus',
+    });
+    expect(getMain.signature, getAlt.signature);
+    expect(
+      PortalRotation.signaturesMatch(
+        getMain.legacySignatureForSource(getMain.m3uUrl),
+        getAlt.signature,
+        getAlt.legacySignatureForSource(getMain.m3uUrl),
+      ),
+      isTrue,
+    );
+
+    final m3uMain = PanelPlaylist.fromJson({
+      'id': 'm3u',
+      'name': 'M3U',
+      'type': 'm3u',
+      'url': 'http://main.test/playlist.m3u8',
+    });
+    final m3uAlt = PanelPlaylist.fromJson({
+      'id': 'm3u',
+      'name': 'M3U',
+      'type': 'm3u',
+      'url': 'https://alt.test/playlist.m3u8',
+    });
+    expect(m3uMain.signature, isNot(m3uAlt.signature));
+    expect(
+      m3uMain.legacySignatureForSource(m3uMain.m3uUrl),
+      'm3u|m3u|http://main.test/playlist.m3u8',
+    );
+    expect(
+      PortalRotation.signaturesMatch(
+        m3uMain.signature,
+        m3uMain.signature,
+        m3uMain.legacySignatureForSource(m3uMain.m3uUrl),
+      ),
+      isTrue,
+    );
+    expect(
+      PortalRotation.signaturesMatch(
+        m3uMain.signature,
+        m3uAlt.signature,
+        m3uAlt.legacySignatureForSource(m3uAlt.m3uUrl),
+      ),
       isFalse,
     );
   });

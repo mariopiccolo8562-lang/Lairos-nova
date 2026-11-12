@@ -84,7 +84,14 @@ class PanelPlaylist {
   }
 
   /// Impronta della lista: se cambia, la lista va rifatta.
-  String get signature => '$id|$type|${isXtream ? '$username|$password' : PortalRotation.pathAndQuery(m3uUrl)}';
+  String get signature {
+    final source = isXtream
+        ? '$username|$password'
+        : PortalRotation.isXtreamGetUrl(m3uUrl)
+            ? PortalRotation.pathAndQuery(m3uUrl)
+            : m3uUrl;
+    return '$id|$type|$source';
+  }
 
   String legacySignatureForSource(String source) =>
       '$id|$type|${isXtream ? '$source|$username|$password' : source}';

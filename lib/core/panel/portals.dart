@@ -97,8 +97,10 @@ class PortalRotation {
     final ordered = mode == 'rot' ? order(candidates, code) : candidates;
     final currentKey = hostKey(current);
     final index = ordered.indexWhere((candidate) => hostKey(candidate) == currentKey);
-    for (var step = 1; step < ordered.length; step++) {
-      final candidate = ordered[(index + step + ordered.length) % ordered.length];
+    final start = index < 0 ? 0 : index + 1;
+    final attempts = index < 0 ? ordered.length : ordered.length - 1;
+    for (var step = 0; step < attempts; step++) {
+      final candidate = ordered[(start + step) % ordered.length];
       if (hostKey(candidate) != currentKey && !_bad(candidate, badUntil, now)) return candidate;
     }
     return null;
