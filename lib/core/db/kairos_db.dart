@@ -183,6 +183,9 @@ class KairosDb {
     return r.isEmpty ? null : _rowToPlaylist(r.first);
   }
 
+  void updatePlaylistSource(int id, {required String source, String? epgUrl}) =>
+      _db.execute('UPDATE playlists SET source = ?, epg_url = ? WHERE id = ?', [source, epgUrl, id]);
+
   void deletePlaylist(int id) {
     _db.execute('DELETE FROM playlists WHERE id = ?', [id]);
     _db.execute("INSERT INTO channels_fts(channels_fts) VALUES('optimize')");

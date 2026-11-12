@@ -52,6 +52,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final watching = ref.read(watchingProvider.notifier); // niente aggiornamenti in background durante la visione
     Future.microtask(() => watching.state++);
     _engine = ref.read(engineProvider);
+    final panel = ref.read(panelProvider);
+    _engine.setPortalHandlers(resolve: panel.resolveChannelUrl, next: panel.nextChannelUrl);
     _video = _engine.video; // un solo VideoController per tutta la vita del motore (niente texture perse a ogni apertura)
     // si entra nel lettore: via dalla memoria le immagini decodificate che nessuna schermata mostra (quelle ancora
     // a vista restano), così il buffer video ha più spazio sui dispositivi con poca memoria

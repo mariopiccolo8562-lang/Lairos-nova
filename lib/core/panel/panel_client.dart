@@ -3,6 +3,9 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import 'portals.dart';
+import '../xtream/xtream_api.dart';
+
 /// Indirizzo del pannello Kairos (lo stesso di Kairos Pro, TV, Lite, XC e Plus).
 const String kDefaultPanelUrl = 'https://panel-kairos.com';
 
@@ -39,7 +42,19 @@ class PanelIdentity {
 
 /// Lista assegnata dal fornitore (Xtream oppure M3U).
 class PanelPlaylist {
-  const PanelPlaylist({required this.id, required this.name, required this.type, this.url = '', this.host = '', this.username = '', this.password = ''});
+  const PanelPlaylist({
+    required this.id,
+    required this.name,
+    required this.type,
+    this.url = '',
+    this.host = '',
+    this.username = '',
+    this.password = '',
+    this.alts = const [],
+    this.altNames = const [],
+    this.mainName = '',
+    this.mode = 'auto',
+  });
   final String id;
   final String name;
   final String type; // xtream | m3u
@@ -47,6 +62,10 @@ class PanelPlaylist {
   final String host;
   final String username;
   final String password;
+  final List<String> alts;
+  final List<String> altNames;
+  final String mainName;
+  final String mode;
 
   bool get isXtream => type == 'xtream' && host.isNotEmpty && username.isNotEmpty;
 
@@ -65,12 +84,42 @@ class PanelPlaylist {
   }
 
   /// Impronta della lista: se cambia, la lista va rifatta.
-  String get signature => '$id|$type|${isXtream ? '$server|$username|$password' : m3uUrl}';
+  String get signature => '$id|$type|${isXtream ? '$username|$password' : PortalRotation.pathAndQuery(m3uUrl)}';
+
+  String legacySignatureForSource(String source) =>
+      '$id|$type|${isXtream ? '$source|$username|$password' : source}';
+
+  String sourceFor(String portal) => isXtream
+      ? portal
+      : PortalRotation.isXtreamGetUrl(m3uUrl)
+          ? PortalRotation.replaceOrigin(m3uUrl, portal)
+          : m3uUrl;
+
+  String? epgUrlFor(String portal) => isXtream
+      ? XtreamApi(baseUrl: portal, username: username, password: password).xmltvUrl()
+      : null;
 
   static PanelPlaylist fromJson(Object? json) {
     final m = json is Map ? json : const {};
     String s(String k) => (m[k] ?? '').toString();
-    return PanelPlaylist(id: s('id'), name: s('name').isEmpty ? 'Lista' : s('name'), type: s('type').isEmpty ? 'm3u' : s('type'), url: s('url'), host: s('host'), username: s('username'), password: s('password'));
+    List<String> strings(String key) => [
+          for (final value in m[key] is List ? m[key] as List : const [])
+            if (value != null && value.toString().trim().isNotEmpty) value.toString(),
+        ];
+    final parsedMode = s('mode');
+    return PanelPlaylist(
+      id: s('id'),
+      name: s('name').isEmpty ? 'Lista' : s('name'),
+      type: s('type').isEmpty ? 'm3u' : s('type'),
+      url: s('url'),
+      host: s('host'),
+      username: s('username'),
+      password: s('password'),
+      alts: strings('alts'),
+      altNames: strings('altNames'),
+      mainName: s('mainName'),
+      mode: const {'auto', 'main', 'alt', 'rot'}.contains(parsedMode) ? parsedMode : 'auto',
+    );
   }
 }
 

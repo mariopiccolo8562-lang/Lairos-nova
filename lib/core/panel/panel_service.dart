@@ -12,8 +12,8 @@ import '../images.dart';
 import '../models/models.dart';
 import '../player/stream_engine.dart';
 import '../providers.dart';
-import '../xtream/xtream_api.dart';
 import 'panel_client.dart';
+import 'portals.dart';
 import 'remote_quiet.dart';
 
 /// Comando del pannello che tocca l'interfaccia (lo esegue la shell): reload | settings | exit.
@@ -119,6 +119,92 @@ class PanelService extends ChangeNotifier {
 
   /// Liste che arrivano dal fornitore (id in Nova).
   Set<int> get providerPlaylistIds => {for (final v in _map.values) int.tryParse(v) ?? -1}..remove(-1);
+
+  Map<String, int> _portalBadUntil(String playlistId) {
+    final raw = _prefs.getString('kx_portal_bad_$playlistId');
+    if (raw == null) return {};
+    try {
+      final value = jsonDecode(raw);
+      if (value is Map) {
+        return {
+          for (final entry in value.entries)
+            if (entry.value is num) entry.key.toString(): (entry.value as num).toInt(),
+        };
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  String _portalHost(PanelPlaylist playlist) {
+    final candidates = PortalRotation.candidates(host: playlist.host, url: playlist.m3uUrl, alts: playlist.alts);
+    return PortalRotation.select(
+      mode: playlist.mode,
+      candidates: candidates,
+      code: code,
+      savedChoice: _prefs.getString('kx_portal_choice_${playlist.id}') ?? '',
+      badUntil: _portalBadUntil(playlist.id),
+    );
+  }
+
+  PanelPlaylist? _playlistForChannel(Channel channel) {
+    final id = channel.playlistId.toString();
+    String? panelId;
+    for (final entry in _map.entries) {
+      if (entry.value == id) {
+        panelId = entry.key;
+        break;
+      }
+    }
+    if (panelId == null) return null;
+    for (final playlist in state?.playlists ?? const <PanelPlaylist>[]) {
+      if (playlist.id == panelId) return playlist;
+    }
+    return null;
+  }
+
+  Future<String?> resolveChannelUrl(Channel channel) async {
+    final playlist = _playlistForChannel(channel);
+    if (playlist == null || (!playlist.isXtream && !PortalRotation.isXtreamGetUrl(playlist.m3uUrl))) return null;
+    final host = _portalHost(playlist);
+    if (host.isEmpty) return null;
+    return PortalRotation.replaceOrigin(channel.url, host);
+  }
+
+  Future<String?> nextChannelUrl(Channel channel) async {
+    final playlist = _playlistForChannel(channel);
+    if (playlist == null) return null;
+    final candidates = PortalRotation.candidates(host: playlist.host, url: playlist.m3uUrl, alts: playlist.alts);
+    if (candidates.length <= 1 || (playlist.mode != 'auto' && playlist.mode != 'rot')) return null;
+    final bad = _portalBadUntil(playlist.id);
+    final current = PortalRotation.originOf(channel.url);
+    final currentKey = PortalRotation.hostKey(current);
+    if (candidates.any((candidate) => PortalRotation.hostKey(candidate) == currentKey)) {
+      bad[currentKey] = DateTime.now().add(const Duration(minutes: 30)).millisecondsSinceEpoch;
+      await _prefs.setString('kx_portal_bad_${playlist.id}', jsonEncode(bad));
+    }
+    final next = PortalRotation.next(
+      mode: playlist.mode,
+      candidates: candidates,
+      code: code,
+      current: current,
+      badUntil: bad,
+    );
+    if (next == null) return null;
+    await _prefs.setString('kx_portal_choice_${playlist.id}', next);
+    _updatePlaylistSource(playlist, next);
+    return PortalRotation.replaceOrigin(channel.url, next);
+  }
+
+  void _updatePlaylistSource(PanelPlaylist playlist, String host) {
+    final id = int.tryParse(_map[playlist.id] ?? '');
+    final existing = id == null ? null : _ref.read(dbProvider).playlist(id);
+    if (existing == null) return;
+    final source = playlist.sourceFor(host);
+    final epg = playlist.epgUrlFor(host) ?? existing.epgUrl;
+    if (existing.source == source && existing.epgUrl == epg) return;
+    _ref.read(dbProvider).updatePlaylistSource(existing.id, source: source, epgUrl: epg);
+    _ref.read(dataVersionProvider.notifier).state++;
+  }
 
   // ------------------------------------------------------------------ avvio
 
@@ -309,13 +395,36 @@ class PanelService extends ChangeNotifier {
       seen.add(p.id);
       final existingId = int.tryParse(map[p.id] ?? '');
       final existing = existingId == null ? null : db.playlist(existingId);
-      if (existing != null && sigs[p.id] == p.signature) continue; // già importata e uguale
+      final signatureMatches = existing != null &&
+          PortalRotation.signaturesMatch(
+            sigs[p.id],
+            p.signature,
+            p.legacySignatureForSource(existing.source),
+          );
+      final host = _portalHost(p);
+      if (signatureMatches) {
+        if (sigs[p.id] != p.signature) sigs[p.id] = p.signature;
+        final source = p.sourceFor(host);
+        final epg = p.epgUrlFor(host) ?? existing.epgUrl;
+        if (existing.source != source || existing.epgUrl != epg) {
+          db.updatePlaylistSource(existing.id, source: source, epgUrl: epg);
+          changed = true;
+        }
+        continue;
+      }
       if (existing != null) db.deletePlaylist(existing.id);
       final int id;
       if (p.isXtream) {
-        id = db.insertPlaylist(name: p.name, kind: PlaylistKind.xtream, source: p.server, username: p.username, password: p.password, epgUrl: XtreamApi(baseUrl: p.server, username: p.username, password: p.password).xmltvUrl());
+        id = db.insertPlaylist(
+          name: p.name,
+          kind: PlaylistKind.xtream,
+          source: host.isEmpty ? p.server : host,
+          username: p.username,
+          password: p.password,
+          epgUrl: p.epgUrlFor(host.isEmpty ? p.server : host),
+        );
       } else {
-        final u = p.m3uUrl;
+        final u = p.sourceFor(host);
         if (u.isEmpty) continue;
         id = db.insertPlaylist(name: p.name, kind: PlaylistKind.m3uUrl, source: u);
       }
@@ -456,6 +565,34 @@ class PanelService extends ChangeNotifier {
       // il limite dei 15 s si conta dalla risposta: dalla partenza, un battito arrivato più in fretta del precedente cadeva
       // prima dei 15 s e il pannello lo rifiutava (429)
       _lastOk = _clock.elapsedMilliseconds;
+      final sat = j['sat'];
+      if (sat is List && sat.isNotEmpty && engine != null && st?.channel != null) {
+        final channel = st!.channel!;
+        final playlist = _playlistForChannel(channel);
+        if (playlist != null) {
+          final candidates = PortalRotation.candidates(
+            host: playlist.host,
+            url: playlist.m3uUrl,
+            alts: playlist.alts,
+          );
+          final bad = _portalBadUntil(playlist.id);
+          final until = DateTime.now().add(const Duration(minutes: 30)).millisecondsSinceEpoch;
+          for (final host in sat) {
+            final key = PortalRotation.hostKey(host.toString());
+            if (key.isNotEmpty && candidates.any((candidate) => PortalRotation.hostKey(candidate) == key)) {
+              bad[key] = until;
+            }
+          }
+          await _prefs.setString('kx_portal_bad_${playlist.id}', jsonEncode(bad));
+          final selected = _portalHost(playlist);
+          if (selected.isNotEmpty &&
+              PortalRotation.hostKey(selected) != PortalRotation.hostKey(PortalRotation.originOf(channel.url))) {
+            await _prefs.setString('kx_portal_choice_${playlist.id}', selected);
+            _updatePlaylistSource(playlist, selected);
+            await engine.play(channel, startAt: engine.status.value.position);
+          }
+        }
+      }
       if (j['rc'] != null) _applyRc(j['rc'], (j['rcv'] ?? '').toString());
       // permessi spenti dal pannello (es. «risoluzione e FPS»): valgono subito, senza aspettare la riapertura
       if (j.containsKey('ph')) _applyPerms(PanelState.parsePerms(j['ph']));
