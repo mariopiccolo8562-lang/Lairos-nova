@@ -68,6 +68,15 @@
 
         <meta-data android:name="flutterEmbedding" android:value="2"/>
         <!-- esito dell'aggiornamento senza conferma -->
+        <!-- Trailer dentro l'app: processo a parte che si chiude all'uscita -->
+        <activity
+            android:name=".TrailerActivity"
+            android:exported="false"
+            android:process=":trailer"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|navigation|uiMode"
+            android:hardwareAccelerated="true"/>
         <receiver android:name=".QuietDone" android:exported="false"/>
         <!-- DNS cifrato: interfaccia locale di Android che vale solo per questa app e solo per le domande DNS (DnsShield.kt) -->
         <service

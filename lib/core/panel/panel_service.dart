@@ -117,6 +117,22 @@ class PanelService extends ChangeNotifier {
   String get code => _identity?.code ?? '';
   Map<String, String> get remoteConfig => _rc;
 
+  /// Trailer cercato dal pannello e aperto dentro l'app (parte Android: TrailerActivity). [kind]: movie | series.
+  /// false se non c'è un trailer o non si può aprire su questo dispositivo.
+  Future<bool> openTrailer(String title, String kind) async {
+    final c = _client;
+    if (c == null || !linked) return false;
+    final t = await c.trailer(title, kind);
+    if (t == null) return false;
+    try {
+      final ok = await const MethodChannel('kairos/nova')
+          .invokeMethod<Object?>('trailer', {'yt': t.yt, 'url': t.url, 'title': t.title.isEmpty ? title : t.title});
+      return ok == true;
+    } on Object {
+      return false;
+    }
+  }
+
   /// Liste che arrivano dal fornitore (id in Nova).
   Set<int> get providerPlaylistIds => {for (final v in _map.values) int.tryParse(v) ?? -1}..remove(-1);
 

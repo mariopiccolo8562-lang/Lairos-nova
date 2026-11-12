@@ -194,6 +194,32 @@ class PanelClient {
     throw last ?? const PanelException('Impossibile raggiungere il server');
   }
 
+  /// Trailer di un film o di una serie cercato dal pannello (TMDB, poi YouTube, poi Apple): `yt` codice del video su
+  /// YouTube oppure `url` file video diretto. null se non c'è o il pannello non risponde. L'anno, se è nel titolo, lo
+  /// riconosce il pannello.
+  Future<({String yt, String url, String title})?> trailer(String title, String kind) async {
+    final t = title.trim();
+    if (t.isEmpty) return null;
+    try {
+      final uri = Uri.parse('${_trim(server)}/api/player/trailer').replace(queryParameters: <String, String>{
+        't': t.length > 160 ? t.substring(0, 160) : t,
+        'kind': kind == 'series' ? 'series' : 'movie',
+        'c': identity.code,
+      });
+      final r = await http.get(uri, headers: {'Accept': 'application/json', 'User-Agent': 'KairosNova'}).timeout(const Duration(seconds: 14));
+      if (r.statusCode != 200) return null;
+      final d = jsonDecode(utf8.decode(r.bodyBytes));
+      if (d is! Map) return null;
+      final yt = (d['yt'] is String ? d['yt'] as String : '').trim();
+      final raw = (d['url'] is String ? d['url'] as String : '').trim();
+      final url = raw.startsWith('https://') ? raw : '';
+      if (yt.isEmpty && url.isEmpty) return null;
+      return (yt: yt, url: url, title: d['title'] is String ? d['title'] as String : '');
+    } on Object {
+      return null;
+    }
+  }
+
   Future<PanelState> register() async {
     final r = await _post('/api/player/register', {..._auth(), 'model': model, 'ver': ver});
     final j = r.body!;

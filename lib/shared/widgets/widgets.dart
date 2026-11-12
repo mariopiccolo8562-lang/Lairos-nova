@@ -8,6 +8,7 @@ import '../../core/device_tier.dart';
 import '../../core/download/download_manager.dart';
 import '../../core/images.dart';
 import '../../core/models/models.dart';
+import '../../core/panel/panel_service.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 
@@ -371,6 +372,20 @@ void showChannelMenu(BuildContext context, WidgetRef ref, Channel c) {
               ctx.push('/play/${c.id}');
             },
           ),
+          if (c.type == ChannelType.movie || c.type == ChannelType.series)
+            ListTile(
+              leading: const Icon(Icons.movie_outlined),
+              title: const Text('Trailer'),
+              onTap: () async {
+                // lo cerca il pannello (TMDB, YouTube, Apple) e si vede dentro l'app
+                final panel = ref.read(panelProvider);
+                final messenger = ScaffoldMessenger.of(ctx);
+                Navigator.pop(ctx);
+                messenger.showSnackBar(const SnackBar(content: Text('Cerco il trailer…'), duration: Duration(seconds: 2)));
+                final ok = await panel.openTrailer(c.name, c.type == ChannelType.series ? 'series' : 'movie');
+                if (!ok) messenger.showSnackBar(SnackBar(content: Text('Nessun trailer trovato per ${c.name}')));
+              },
+            ),
           if (c.type == ChannelType.movie || c.type == ChannelType.series)
             Builder(builder: (_) {
               final dm = ref.read(downloadManagerProvider);

@@ -90,6 +90,17 @@ class MainActivity : FlutterActivity() {
                 "dnsStart" -> { DnsShield.start(this); result.success(DnsShield.state) }
                 "dnsStop" -> { DnsShield.stop(applicationContext); result.success(DnsShield.state) }
                 "dnsState" -> result.success(DnsShield.state)
+                // trailer dentro l'app (TrailerActivity, in un processo a parte): video di YouTube oppure file diretto
+                "trailer" -> {
+                    val title = call.argument<String>("title") ?: ""
+                    val id = Yt.id(call.argument<String>("yt") ?: "")
+                    val file = call.argument<String>("url") ?: ""
+                    when {
+                        id != null -> { TrailerActivity.start(this, id, title); result.success(true) }
+                        TrailerActivity.fileOk(file) -> { TrailerActivity.startFile(this, file, title); result.success(true) }
+                        else -> result.success(false)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
