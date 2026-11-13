@@ -479,7 +479,8 @@ class PanelService extends ChangeNotifier {
         'dev': _dev,
       };
       await _readDns();
-      final call = c.heartbeat(sdns: _dnsWanted ? _dns : '', state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
+      final net = await _netInfo();
+      final call = c.heartbeat(net: net, sdns: _dnsWanted ? _dns : '', state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
       _beatCall = call;
       final r = await call.whenComplete(() {
         if (identical(_beatCall, call)) _beatCall = null;
@@ -539,6 +540,15 @@ class PanelService extends ChangeNotifier {
   /// Non è una scelta del cliente. [_dns] = stato dell'ultima volta, per il battito.
   String _dns = '';
   bool get _dnsWanted => _rc['sdns'] == 'on';
+  /// rete del dispositivo (tipo e segnale Wi-Fi) per «Online ora» del pannello
+  Future<Map<String, Object?>> _netInfo() async {
+    try {
+      final r = await const MethodChannel('kairos/nova').invokeMethod<Object?>('netInfo');
+      return r is Map ? r.map((k, v) => MapEntry(k.toString(), v)) : const {};
+    } catch (_) {
+      return const {};
+    }
+  }
 
   /// Stato per il lucchetto accanto alla «K» (vuoto = niente lucchetto): vedi [DnsBadge].
   final ValueNotifier<String> dnsBadge = ValueNotifier('');
