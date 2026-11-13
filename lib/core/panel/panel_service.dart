@@ -14,6 +14,7 @@ import '../models/models.dart';
 import '../player/stream_engine.dart';
 import '../providers.dart';
 import '../xtream/xtream_api.dart';
+import '../trend_match.dart';
 import 'panel_client.dart';
 import 'remote_quiet.dart';
 
@@ -117,6 +118,27 @@ class PanelService extends ChangeNotifier {
   bool get active => state?.active == true;
   String get code => _identity?.code ?? '';
   Map<String, String> get remoteConfig => _rc;
+
+  /// Classifica di tendenza (13 novembre 2026): si riscarica al più ogni 6 ore; senza risposta resta l'ultima.
+  TrendList _trend = TrendList.empty;
+  int _trendAt = 0;
+  Future<TrendList>? _trendCall;
+
+  Future<TrendList> trending() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _trendAt < 6 * 3600 * 1000) return Future.value(_trend);
+    return _trendCall ??= () async {
+      try {
+        final c = _client;
+        final t = c == null ? null : await c.trending();
+        _trendAt = DateTime.now().millisecondsSinceEpoch;
+        if (t != null && !t.isEmpty) _trend = t;
+        return _trend;
+      } finally {
+        _trendCall = null;
+      }
+    }();
+  }
 
   /// Trailer cercato dal pannello e aperto dentro l'app (parte Android: TrailerActivity). [kind]: movie | series.
   /// false se non c'è un trailer o non si può aprire su questo dispositivo.

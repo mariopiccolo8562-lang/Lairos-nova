@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
+import '../trend_match.dart';
 
 /// Indirizzo del pannello Kairos (lo stesso di Kairos Pro, TV, Lite, XC e Plus).
 const String kDefaultPanelUrl = 'https://panel-kairos.com';
@@ -192,6 +193,18 @@ class PanelClient {
       }
     }
     throw last ?? const PanelException('Impossibile raggiungere il server');
+  }
+
+  /// Classifica dei titoli di tendenza della settimana (/api/player/trending); null se non arriva.
+  Future<TrendList?> trending() async {
+    try {
+      final r = await http.get(Uri.parse('${_trim(server)}/api/player/trending'),
+          headers: {'Accept': 'application/json', 'User-Agent': 'KairosNova'}).timeout(const Duration(seconds: 8));
+      if (r.statusCode != 200 || r.bodyBytes.length > 200000) return null;
+      return TrendList.parse(jsonDecode(utf8.decode(r.bodyBytes)));
+    } on Object {
+      return null;
+    }
   }
 
   /// Trailer di un film o di una serie cercato dal pannello (TMDB, poi YouTube, poi Apple): `yt` codice del video su

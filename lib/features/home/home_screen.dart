@@ -11,6 +11,7 @@ import '../../core/parental.dart';
 import '../../core/providers.dart';
 import '../../core/theme/kairos_theme.dart';
 import '../../shared/widgets/widgets.dart';
+import 'trend_row.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -82,6 +83,9 @@ class HomeScreen extends ConsumerWidget {
                   action: 'Tutti', onAction: () => context.go('${_base(g.type)}?g=${Uri.encodeComponent(g.name)}')),
             ),
           ),
+        // di tendenza questa settimana (classifica del pannello): solo i titoli che la playlist ha; vuota = non c'è
+        const SliverToBoxAdapter(child: TrendRow(ChannelType.movie, 'Film di tendenza questa settimana')),
+        const SliverToBoxAdapter(child: TrendRow(ChannelType.series, 'Serie di tendenza questa settimana')),
         if (favs.isNotEmpty) ...[
           SliverToBoxAdapter(
               child: SectionHeader('Preferiti',
