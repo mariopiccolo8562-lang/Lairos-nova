@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/device_tier.dart';
+import '../../core/dns_badge.dart';
 import '../../core/panel/panel_service.dart';
 import '../../core/parental.dart';
 import '../../core/providers.dart';
@@ -136,6 +137,15 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
           ])
         else
           child,
+        // lucchetto del DNS cifrato (solo se il fornitore lo ha acceso): accanto alla «K» della barra; sul telefono
+        // nella Home, in alto a destra. Verde = attivo, giallo = non partito, tenue = in avvio
+        if (wide || idx == 0)
+          Positioned(
+            top: wide ? 24 : 8,
+            left: wide ? 64 : null,
+            right: wide ? null : 12,
+            child: SafeArea(child: IgnorePointer(child: _DnsLock(state: ref.read(panelProvider).dnsBadge))),
+          ),
       ]),
       bottomNavigationBar: wide ? null : _bottomBar(context, idx),
     );
@@ -165,6 +175,27 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: bar,
       ),
+    );
+  }
+}
+
+class _DnsLock extends StatelessWidget {
+  const _DnsLock({required this.state});
+  final ValueNotifier<String> state;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String>(
+      valueListenable: state,
+      builder: (context, st, _) {
+        if (st.isEmpty) return const SizedBox.shrink();
+        return Icon(
+          DnsBadge.on(st) ? Icons.lock_rounded : Icons.lock_open_rounded,
+          size: 15,
+          color: Color(DnsBadge.color(st)),
+          semanticLabel: DnsBadge.text(st),
+        );
+      },
     );
   }
 }

@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart' show AppLifecycleListener, AppLifecycleSta
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../dns_badge.dart';
 import '../images.dart';
 import '../models/models.dart';
 import '../player/stream_engine.dart';
@@ -452,11 +453,7 @@ class PanelService extends ChangeNotifier {
         if (engine != null) ...engine.panelStats() else 'line': StreamEngine.savedLine(_prefs),
         'dev': _dev,
       };
-      if (_dnsWanted) {
-        try {
-          _dns = (await const MethodChannel('kairos/nova').invokeMethod<Object?>('dnsState'))?.toString() ?? '';
-        } catch (_) {}
-      }
+      await _readDns();
       final call = c.heartbeat(sdns: _dnsWanted ? _dns : '', state: watching ? 'playing' : 'idle', title: title, screen: watching ? 'player' : 'home', kickAck: _kickSeen, cfg: _cfg(), stats: stats, rcv: _rcv, vis: true);
       _beatCall = call;
       final r = await call.whenComplete(() {
@@ -518,12 +515,32 @@ class PanelService extends ChangeNotifier {
   String _dns = '';
   bool get _dnsWanted => _rc['sdns'] == 'on';
 
+  /// Stato per il lucchetto accanto alla «K» (vuoto = niente lucchetto): vedi [DnsBadge].
+  final ValueNotifier<String> dnsBadge = ValueNotifier('');
+
   Future<void> _syncDns() async {
+    final on = _dnsWanted && active;
     try {
-      _dns = (await const MethodChannel('kairos/nova').invokeMethod<Object?>(_dnsWanted && active ? 'dnsStart' : 'dnsStop'))?.toString() ?? '';
+      _dns = (await const MethodChannel('kairos/nova').invokeMethod<Object?>(on ? 'dnsStart' : 'dnsStop'))?.toString() ?? '';
     } catch (_) {
       _dns = '';
     }
+    if (_disposed) return;
+    dnsBadge.value = DnsBadge.state(on, _dns);
+    if (!on) return;
+    // l'avvio (e la richiesta di Android, la prima volta) dura qualche secondo: il lucchetto si aggiorna da solo
+    for (final ms in const [1500, 4000, 9000]) {
+      unawaited(Future<void>.delayed(Duration(milliseconds: ms), _readDns));
+    }
+  }
+
+  Future<void> _readDns() async {
+    if (_disposed || !_dnsWanted) return;
+    try {
+      _dns = (await const MethodChannel('kairos/nova').invokeMethod<Object?>('dnsState'))?.toString() ?? '';
+    } catch (_) {}
+    if (_disposed) return;
+    dnsBadge.value = DnsBadge.state(active, _dns);
   }
 
   void _applyRc(Object? raw, String rcv) {
@@ -612,6 +629,7 @@ class PanelService extends ChangeNotifier {
     _beat?.cancel();
     _resumeTimer?.cancel();
     _refresh?.cancel();
+    dnsBadge.dispose();
     uiCommand.dispose();
     super.dispose();
   }
