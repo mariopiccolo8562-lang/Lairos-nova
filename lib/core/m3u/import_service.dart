@@ -46,6 +46,7 @@ class ImportService {
         source: playlist.source,
         username: playlist.username,
         password: playlist.password,
+        hideSep: hideSepNames,
       ),
       errorsAreFatal: true,
       onError: receive.sendPort,
@@ -89,6 +90,7 @@ class _Job {
     required this.source,
     this.username,
     this.password,
+    this.hideSep = true,
   });
   final SendPort sendPort;
   final String dbPath;
@@ -97,11 +99,14 @@ class _Job {
   final String source;
   final String? username;
   final String? password;
+  /// separatori del fornitore («----NOME----») nascosti (voce «o.sep» del pannello: off = si vedono)
+  final bool hideSep;
 }
 
 // --------------------------------------------------------------- Worker M3U
 
 Future<void> _playlistWorker(_Job job) async {
+  hideSepNames = job.hideSep; // l'isolato non vede le variabili dell'app: la scelta arriva con il lavoro
   final send = job.sendPort;
   KairosDb? db;
   BulkInserter? bulk;

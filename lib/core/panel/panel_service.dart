@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../dns_badge.dart';
 import '../images.dart';
+import '../m3u/m3u_parser.dart' show hideSepNames;
 import '../models/models.dart';
 import '../player/stream_engine.dart';
 import '../providers.dart';
@@ -37,6 +38,7 @@ class PanelService extends ChangeNotifier {
     if (code.isNotEmpty && secret.isNotEmpty) _identity = PanelIdentity(code, secret);
     _server = _prefs.getString('kx_server') ?? kDefaultPanelUrl;
     _rc = _decode(_prefs.getString('kx_rc'));
+    hideSepNames = _rc['o.sep'] != 'off';
     _rcv = _prefs.getString('kx_rcv') ?? '';
     _map = _decode(_prefs.getString('kx_pl_map'));
     _sigs = _decode(_prefs.getString('kx_pl_sig'));
@@ -319,6 +321,7 @@ class PanelService extends ChangeNotifier {
     _client = null;
     state = null;
     _rc = const {};
+    hideSepNames = _rc['o.sep'] != 'off';
     _rcv = '';
     _perms = const {};
     _map = const {};
@@ -573,6 +576,7 @@ class PanelService extends ChangeNotifier {
     } catch (_) {}
     if (jsonEncode(next) == jsonEncode(_rc) && rcv == _rcv) return;
     _rc = next;
+    hideSepNames = _rc['o.sep'] != 'off';
     _rcv = rcv;
     unawaited(_syncDns()); // voce «sdns» accesa o spenta dal pannello
     _prefs.setString('kx_rc', jsonEncode(next));

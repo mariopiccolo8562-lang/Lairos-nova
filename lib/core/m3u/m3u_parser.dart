@@ -126,7 +126,7 @@ class M3uStreamParser {
       _reset();
       return null;
     }
-    if (isSepName(_name!)) {
+    if (hideSepNames && isSepName(_name!)) {
       _reset();
       return null;
     }
@@ -266,6 +266,8 @@ class M3uStreamParser {
 final RegExp _rxSep = RegExp(r'^[\s\-—=#*_~▬═━─•●◆★☆✦|+<>]{3,}|^[\s\-—=#*_~▬═━─•●◆★☆✦|+<>.:]{2,}.*[\-—=#*_~▬═━─•●◆★☆✦|+<>]{2,}\s*$');
 final RegExp _rxSep4 = RegExp(r'[\-—=#▬═━─_*~]{4,}');
 final RegExp _rxAlnum = RegExp(r'[\p{L}\p{N}]', unicode: true);
+/// voce «o.sep» del pannello (off = i separatori si vedono); la imposta il servizio del pannello
+bool hideSepNames = true;
 bool isSepName(String raw) {
   final n = raw.trim();
   if (n.isEmpty) return true;
